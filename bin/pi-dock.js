@@ -39,6 +39,7 @@ function parseArgs(argv) {
 
 function openBrowser(url) {
 	const platform = process.platform;
+	/** @type {[string, string[]]} */
 	const command =
 		platform === "win32"
 			? ["cmd", ["/c", "start", "", url]]

@@ -25,11 +25,14 @@
 		"smoke": "node scripts/smoke-real.mjs",
 		"lint": "biome lint .",
 		"lint:fix": "biome lint --write .",
-		"format": "biome format --write ."
+		"format": "biome format --write .",
+		"typecheck": "tsc -p tsconfig.json"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.6.3",
-		"@playwright/test": "1.48.1"
+		"@playwright/test": "1.48.1",
+		"@types/node": "^22.20.5",
+		"typescript": "^5.9.3"
 	},
 	"keywords": [
 		"pi",

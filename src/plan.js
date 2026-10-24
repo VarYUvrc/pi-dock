@@ -1,17 +1,26 @@
 export const PLAN_TOOL = "dock_plan";
 export const PLAN_STATE_ENTRY = "dock_plan_state";
 
+/** @typedef {import("./pi-protocol.js").PiSessionEntry} PiSessionEntry */
+/** @typedef {"pending" | "in_progress" | "done" | "cancelled"} PlanItemStatus */
+/** @typedef {{ id: string, text: string, status: PlanItemStatus }} PlanItem */
+/** @typedef {{ title: string, items: PlanItem[] }} Plan */
+/** @typedef {{ title?: unknown, items?: unknown }} PlanDetails */
+
 const STATUSES = new Set(["pending", "in_progress", "done", "cancelled"]);
 
 /**
  * Normalise the `details` payload of a dock_plan tool result.
  * Returns null when details is not a plan; a cleared plan is an empty item list.
+ * @param {unknown} details
+ * @returns {Plan | null}
  */
 export function normalizePlan(details) {
 	if (!details || typeof details !== "object") return null;
-	if (!Array.isArray(details.items)) return null;
+	const plan = /** @type {PlanDetails} */ (details);
+	if (!Array.isArray(plan.items)) return null;
 	const items = [];
-	for (const item of details.items) {
+	for (const item of plan.items) {
 		if (!item || typeof item !== "object") continue;
 		if (typeof item.id !== "string" || typeof item.text !== "string") continue;
 		items.push({
@@ -21,10 +30,11 @@ export function normalizePlan(details) {
 		});
 	}
 	const title =
-		typeof details.title === "string" && details.title.trim() ? details.title.trim() : "";
+		typeof plan.title === "string" && plan.title.trim() ? plan.title.trim() : "";
 	return { title, items };
 }
 
+/** @param {PiSessionEntry} entry */
 function planFromEntry(entry) {
 	if (!entry || typeof entry !== "object") return null;
 	if (entry.type === "custom" && entry.customType === PLAN_STATE_ENTRY) {
@@ -39,6 +49,9 @@ function planFromEntry(entry) {
 /**
  * Pick the newest plan from the active branch. get_entries also returns
  * abandoned branches, so walking from leafId is required.
+ * @param {PiSessionEntry[]} entries
+ * @param {string | null} [leafId]
+ * @returns {Plan | null}
  */
 export function planFromEntries(entries, leafId) {
 	if (!Array.isArray(entries) || !entries.length) return null;

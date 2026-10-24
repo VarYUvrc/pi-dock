@@ -85,6 +85,13 @@ pi-dock --cwd C:\path\to\project
   以降の URL に認証情報は残りません。API は許可した RPC コマンドだけを中継します。
   Markdown は全文字をエスケープして描画します。
 - **依存ゼロ**: 実行時依存はありません（Markdown レンダラも同梱の小さな実装）。
+- **型を書くのは Pi との境界だけ**: `src/*.js` が受け取る RPC イベント・セッション entry・
+  レスポンスを `src/pi-protocol.d.ts` に写し、`npm run typecheck` で消費側（`src/`）と
+  生成側（`test/fixtures/fake-pi.js`）の両方を検査します。Pi 本体の型定義は取り込みません
+  （依存を含めて 100MB 超を開発環境に持ち込まないため）。ブラウザ側 `public/*.js` は
+  静的配信でビルド工程を持たないため TS 化しません。DOM 型のノイズ（`HTMLElement` の
+  キャスト追加など）が検出内容の大半を占め、ビルド工程と dist 管理のコストに見合わないためです。
+  UI の振る舞いは E2E で守ります。
 
 ## 開発
 
@@ -93,6 +100,7 @@ npm install
 npm test          # Playwright E2E（実際の Pi の代わりに RPC フィクスチャを使用）
 npm run lint      # Biome で JS/TS/CSS/JSON を静的検査
 npm run format    # Biome で整形（任意）
+npm run typecheck # Pi 境界の型検査（src/ と E2E フィクスチャ）
 npm start -- --cwd <path>
 ```
 

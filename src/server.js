@@ -198,6 +198,7 @@ export async function createDock({
 		return runtime;
 	}
 
+	/** @param {import("./pi-protocol.js").PiRecord} record */
 	function onRuntimeRecord(runtime, record) {
 		runtime.live.apply(record);
 		if (record.type === "session_info_changed") {
@@ -261,7 +262,8 @@ export async function createDock({
 		}
 		if (
 			record.type === "entry_appended" &&
-			record.entry?.customType === PLAN_STATE_ENTRY
+			record.entry?.type === "custom" &&
+			record.entry.customType === PLAN_STATE_ENTRY
 		) {
 			broadcast({
 				type: "dock:plan",
@@ -775,7 +777,8 @@ export async function createDock({
 			resolve();
 		});
 	});
-	actualPort = server.address().port;
+	const address = server.address();
+	actualPort = typeof address === "object" && address ? address.port : port;
 
 	try {
 		activateRuntime(await startRuntime({ initial: true }));

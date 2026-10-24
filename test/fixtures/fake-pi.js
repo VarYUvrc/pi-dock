@@ -3,6 +3,14 @@
 // the user's Pi configuration; the dock tests drive this instead of a real model.
 import { readFile } from "node:fs/promises";
 
+/** @typedef {import("../../src/pi-protocol.js").PiRecord} PiRecord */
+/** @typedef {import("../../src/pi-protocol.js").PiResponse} PiResponse */
+/** @typedef {import("../../src/pi-protocol.js").PiAssistantMessage} PiAssistantMessage */
+/** @typedef {import("../../src/pi-protocol.js").PiUserMessage} PiUserMessage */
+/** @typedef {import("../../src/pi-protocol.js").PiContentBlock} PiContentBlock */
+/** @typedef {import("../../src/pi-protocol.js").PiToolOutput} PiToolOutput */
+/** @typedef {import("../../src/pi-protocol.js").PiToolResultMessage} PiToolResultMessage */
+
 const MODELS = [
 	{
 		id: "fake-fast",
@@ -124,10 +132,17 @@ process.stdin.on("data", (chunk) => {
 	}
 });
 
+/** @param {PiRecord | PiResponse} record */
 function write(record) {
 	process.stdout.write(`${JSON.stringify(record)}\n`);
 }
 
+/**
+ * @param {string} id
+ * @param {string} command
+ * @param {unknown} [data]
+ * @param {string} [error]
+ */
 function respond(id, command, data, error) {
 	write({
 		id,
@@ -140,6 +155,7 @@ function respond(id, command, data, error) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** @returns {import("../../src/pi-protocol.js").PiUsage} */
 function usage() {
 	return {
 		input: 10,
@@ -151,6 +167,11 @@ function usage() {
 	};
 }
 
+/**
+ * @param {PiContentBlock[]} content
+ * @param {string} [stopReason]
+ * @returns {PiAssistantMessage}
+ */
 function assistant(content, stopReason = "stop") {
 	return {
 		role: "assistant",
@@ -164,6 +185,11 @@ function assistant(content, stopReason = "stop") {
 	};
 }
 
+/**
+ * @param {string} content
+ * @param {import("../../src/pi-protocol.js").PiImageBlock[]} [images]
+ * @returns {PiUserMessage}
+ */
 function user(content, images = []) {
 	return {
 		role: "user",
@@ -192,6 +218,10 @@ function formatPlan(plan) {
 	return lines.length ? lines.join("\n") : "No plan";
 }
 
+/**
+ * @param {any} args
+ * @returns {PiToolOutput}
+ */
 function applyPlan(args) {
 	const existing = new Map((session.plan?.items ?? []).map((item) => [item.id, item]));
 	let items = (session.plan?.items ?? []).map((item) => ({ ...item }));
@@ -233,6 +263,7 @@ async function streamAssistant(parts, { slow = false } = {}) {
 	const calls = [];
 	const started = Date.now();
 	write({ type: "message_start", message: assistant([], "pending") });
+	/** @type {PiContentBlock[]} */
 	const content = [];
 	for (const [index, part] of parts.entries()) {
 		if (part.type === "thinking") {
@@ -321,7 +352,7 @@ async function runTool(call = session.lastToolCall, { isError = false } = {}) {
 		partialResult: { content: [{ type: "text", text: "partial" }] },
 	});
 	await sleep(20);
-	const outcome =
+	const outcome = /** @type {PiToolOutput} */ (
 		call.name === "dock_plan"
 			? applyPlan(call.arguments)
 			: call.name === "edit"
@@ -334,7 +365,8 @@ async function runTool(call = session.lastToolCall, { isError = false } = {}) {
 				: {
 						content: [{ type: "text", text: isError ? "boom from fake pi\n" : "hi from fake pi\n" }],
 						details: {},
-					};
+					}
+	);
 	session.contextTokens += 700;
 	write({
 		type: "tool_execution_end",
@@ -344,6 +376,7 @@ async function runTool(call = session.lastToolCall, { isError = false } = {}) {
 		isError,
 		durationMs: 41,
 	});
+	/** @type {PiToolResultMessage} */
 	const result = {
 		role: "toolResult",
 		toolCallId: call.id,
