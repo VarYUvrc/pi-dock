@@ -2982,8 +2982,8 @@ function renderChrome() {
 		state.compaction?.enabled && Number.isFinite(state.compaction?.thresholdPercent)
 			? Math.max(0, Math.min(100, state.compaction.thresholdPercent))
 			: null;
-	dom.ringFg.setAttribute(
-		"stroke-dashoffset",
+	dom.ringFg.style.setProperty(
+		"--ring-offset",
 		percent === null ? String(circumference) : String(circumference * (1 - percent / 100)),
 	);
 	dom.contextButton.classList.toggle("unknown", percent === null);
@@ -2995,7 +2995,7 @@ function renderChrome() {
 		dom.ringLimit.setAttribute("visibility", "hidden");
 	} else {
 		dom.ringLimit.setAttribute("visibility", "visible");
-		dom.ringLimit.setAttribute("stroke-dashoffset", String(-circumference * (limit / 100)));
+		dom.ringLimit.style.setProperty("--ring-limit-offset", String(-circumference * (limit / 100)));
 	}
 	const warnAt = limit === null ? 80 : Math.max(1, limit * 0.85);
 	const dangerAt = limit === null ? 95 : limit;

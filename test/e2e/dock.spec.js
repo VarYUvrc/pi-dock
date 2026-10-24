@@ -36,6 +36,13 @@ async function expectDone() {
 	await expect(page.locator("#stopButton")).toBeHidden({ timeout: 15_000 });
 }
 
+/** Rendered ring arc length in user units (circumference is ~47.12). */
+function ringOffset() {
+	return page
+		.locator("#ringFg")
+		.evaluate((el) => parseFloat(getComputedStyle(el).strokeDashoffset));
+}
+
 function elapsedSeconds(text) {
 	const match = /^(\d+)h(\d{2})m(\d{2})s$/.exec(text ?? "");
 	if (!match) return NaN;
@@ -258,10 +265,14 @@ test("refreshes the context ring while a response is streaming", async () => {
 	await button.click();
 	await expect(page.getByTestId("compact-button")).toHaveCount(0);
 	await button.click();
-	await expect.poll(() => button.getAttribute("title"), { timeout: 10_000 }).not.toBe(before);
+	await expect.poll(ringOffset, { timeout: 10_000 }).not.toBe(before);
 	await expectDone();
 	await expect(button).not.toHaveClass(/running/);
 	expect(await button.getAttribute("title")).toContain("コンテキスト");
+	// The dark arc has to actually grow with the reported usage.
+	const offset = await ringOffset();
+	expect(offset).toBeLessThan(47.12);
+	expect(offset).toBeGreaterThan(0);
 });
 
 test("sets per-model compaction in Pi settings without losing other settings", async () => {
@@ -990,7 +1001,8 @@ test("compacts the context from the menu", async () => {
 	await expect(page.locator("#contextButton")).toHaveClass(/unknown/);
 	await expect(page.locator("#contextButton")).toHaveAttribute("title", /コンテキスト/);
 	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /不明/);
-	await expect(page.locator("#ringFg")).toHaveAttribute("stroke-dashoffset", "47.12");
+	await expect(page.locator("#ringFg")).toBeVisible();
+	await expect.poll(ringOffset).toBeCloseTo(47.12, 1);
 
 	await send("hello");
 	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
