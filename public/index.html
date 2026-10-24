@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ja">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="color-scheme" content="light dark" />
+		<title>Pi-dock</title>
+		<link
+			rel="icon"
+			href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23d4471f'/%3E%3Cpath d='M6 8h12M6 12.5h12M9 17h6' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E"
+		/>
+		<script src="/theme-init.js"></script>
+		<link rel="stylesheet" href="/style.css" />
+	</head>
+	<body>
+		<svg class="sprite" aria-hidden="true" focusable="false">
+			<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+			<symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" /><path d="M12 8v4l2.5 2" /></symbol>
+			<symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" /><circle cx="16" cy="7" r="2" /><circle cx="8" cy="17" r="2" /></symbol>
+			<symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6" /></symbol>
+			<symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.2" fill="currentColor" stroke="none" /></symbol>
+			<symbol id="i-chevron" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4" /></symbol>
+			<symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 4.5c.6 3.6 2.4 5.4 6 6-3.6.6-5.4 2.4-6 6-.6-3.6-2.4-5.4-6-6 3.6-.6 5.4-2.4 6-6Z" /><path d="M18.5 16.5c.25 1.5 1 2.25 2.5 2.5-1.5.25-2.25 1-2.5 2.5-.25-1.5-1-2.25-2.5-2.5 1.5-.25 2.25-1 2.5-2.5Z" /></symbol>
+			<symbol id="i-tool" viewBox="0 0 24 24"><path d="m5 8 4 4-4 4M12 17h7" /></symbol>
+			<symbol id="i-read" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5Z" /><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5Z" /></symbol>
+			<symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L20 8l-4-4L4 16v4Z" /><path d="m14 6 4 4" /></symbol>
+			<symbol id="i-write" viewBox="0 0 24 24"><path d="M6 3h7l5 5v13H6z" /><path d="M13 3v5h5M12 12v5M9.5 14.5h5" /></symbol>
+			<symbol id="i-command" viewBox="0 0 24 24"><path d="m5 7 4 5-4 5M12 17h7" /></symbol>
+			<symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11" /><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" /></symbol>
+			<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M4 12h16M12 4c2.5 2.4 2.5 13.6 0 16-2.5-2.4-2.5-13.6 0-16Z" /></symbol>
+			<symbol id="i-agent" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" /></symbol>
+			<symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" /></symbol>
+			<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7" /></symbol>
+			<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></symbol>
+			<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></symbol>
+			<symbol id="i-model" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.5" /><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4" /></symbol>
+			<symbol id="i-prompt" viewBox="0 0 24 24"><path d="M7 4h7l4 4v12H7z" /><path d="M14 4v4h4M10 12h5M10 16h5" /></symbol>
+			<symbol id="i-extension" viewBox="0 0 24 24"><path d="M9 4h6v3a2 2 0 1 0 4 0V4h1v6h-3a2 2 0 1 0 0 4h3v6h-6v-3a2 2 0 1 0-4 0v3H4v-6h3a2 2 0 1 0 0-4H4V4h5Z" /></symbol>
+			<symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6" /></symbol>
+			<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 3 20h18L12 4Z" /><path d="M12 10v4M12 17h.01" /></symbol>
+			<symbol id="i-dock" viewBox="0 0 24 24"><path d="M4 8h16M4 13h16M8 18h8" /></symbol>
+			<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2H10l2 2.5h6.5a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" /></symbol>
+			<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></symbol>
+			<symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z" /></symbol>
+			<symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2" /><path d="M8 21h8M12 17v4" /></symbol>
+			<symbol id="i-arrow-in" viewBox="0 0 24 24"><path d="M14 5h5v14h-5M4 12h11M11 8l4 4-4 4" /></symbol>
+			<symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5" /><circle cx="8.5" cy="9.5" r="1.4" /><path d="m4 17 5-5 3.5 3.5 2.5-2.5 5 5" /></symbol>
+			<symbol id="i-plan" viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9" /><path d="m17.5 16.5 1.5 1.5 3-3" /></symbol>
+			<symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v5M14 11v5" /></symbol>
+		</svg>
+
+		<div class="app">
+			<header class="topbar">
+				<div class="brand" title="Pi-dock">
+					<svg class="mark" aria-hidden="true"><use href="#i-dock" /></svg>
+					<span class="app-name">Pi-dock</span>
+					<span class="session" id="sessionName"></span>
+				</div>
+				<div class="top-actions">
+					<span class="project" id="projectName" hidden>
+						<svg class="icon" aria-hidden="true"><use href="#i-folder" /></svg>
+						<span id="projectLabel"></span>
+					</span>
+					<div class="model-group" id="modelGroup" role="group" aria-label="モデルと推論強度">
+						<button class="chip" id="modelButton" type="button" title="モデル" aria-haspopup="menu">
+							<svg class="icon" aria-hidden="true"><use href="#i-model" /></svg>
+							<span id="modelLabel">—</span>
+							<svg class="icon chev" aria-hidden="true"><use href="#i-chevron" /></svg>
+						</button>
+						<button class="chip" id="thinkingButton" type="button" title="推論強度" aria-haspopup="menu">
+							<svg class="icon" aria-hidden="true"><use href="#i-spark" /></svg>
+							<span id="thinkingLabel">off</span>
+							<svg class="icon chev" aria-hidden="true"><use href="#i-chevron" /></svg>
+						</button>
+					</div>
+					<button class="ring-button" id="contextButton" type="button" title="コンテキスト">
+						<svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
+							<circle class="ring-bg" cx="10" cy="10" r="7.5" />
+							<circle class="ring-limit" id="ringLimit" cx="10" cy="10" r="7.5" />
+							<circle class="ring-fg" id="ringFg" cx="10" cy="10" r="7.5" />
+						</svg>
+					</button>
+					<button class="icon-btn plan-toggle" id="planToggle" type="button" title="計画" aria-label="計画" aria-expanded="false">
+						<svg class="icon"><use href="#i-plan" /></svg>
+					</button>
+					<span class="top-sep" aria-hidden="true"></span>
+					<button class="icon-btn" id="historyButton" type="button" title="履歴" aria-label="履歴">
+						<svg class="icon"><use href="#i-history" /></svg>
+					</button>
+					<button class="icon-btn" id="settingsButton" type="button" title="設定" aria-label="設定">
+						<svg class="icon"><use href="#i-settings" /></svg>
+					</button>
+				</div>
+			</header>
+
+			<div class="banner" id="banner" role="alert" hidden>
+				<svg class="icon" aria-hidden="true"><use href="#i-alert" /></svg>
+				<span id="bannerText"></span>
+				<button class="text-btn" id="bannerAction" type="button" hidden></button>
+			</div>
+
+			<div class="workspace">
+				<section class="chat" aria-label="チャット">
+					<main class="scroller" id="scroller">
+						<div class="messages" id="messages">
+							<div class="message-list" id="messageList" aria-live="polite" aria-relevant="additions text"></div>
+							<div id="liveMount"></div>
+							<div class="run-status" id="runStatus" role="status" hidden></div>
+						</div>
+						<div class="empty" id="empty">
+							<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-dock" /></svg>
+						</div>
+						<div class="scroll-tail" aria-hidden="true"></div>
+					</main>
+
+					<button class="jump-button" id="jumpButton" type="button" aria-label="最新へ" hidden>
+						<svg class="icon"><use href="#i-down" /></svg>
+					</button>
+
+					<footer class="composer-area">
+						<div class="composer-wrap">
+							<div class="widgets" id="widgets" hidden></div>
+							<div class="composer" id="composer">
+								<label class="sr-only" for="input">メッセージ</label>
+								<textarea id="input" rows="1" placeholder="メッセージ" autocomplete="off" spellcheck="false"></textarea>
+								<div class="attachments" id="attachments" hidden></div>
+								<div class="composer-bar">
+									<div class="composer-left">
+										<div class="composer-tools">
+											<button class="composer-tool" id="commandButton" type="button" title="コマンド" aria-label="コマンド" aria-expanded="false">
+												<svg class="icon"><use href="#i-plus" /></svg>
+											</button>
+											<button class="composer-tool" id="imageButton" type="button" title="画像を添付" aria-label="画像を添付">
+												<svg class="icon"><use href="#i-image" /></svg>
+											</button>
+											<input id="imageInput" type="file" accept="image/*" multiple hidden />
+										</div>
+										<div class="composer-statuses" id="composerLeft"></div>
+									</div>
+									<div class="composer-right">
+										<div class="send-mode" id="sendMode" role="group" aria-label="送信方法" hidden>
+											<button type="button" data-send-mode="steer" aria-pressed="true" title="実行中のターンに割り込む">Steer</button>
+											<button type="button" data-send-mode="followUp" aria-pressed="false" title="実行が終わってから送る">Follow-up</button>
+										</div>
+										<span class="queue-badge" id="queueBadge" hidden></span>
+										<button class="send-button" id="sendButton" type="button" title="送信 (Ctrl+Enter)" aria-label="送信" disabled>
+											<svg class="icon"><use href="#i-send" /></svg>
+										</button>
+										<button class="stop-button" id="stopButton" type="button" title="中断 (Esc)" aria-label="中断" hidden>
+											<svg class="icon"><use href="#i-stop" /></svg>
+										</button>
+									</div>
+								</div>
+							</div>
+							<div class="popover command-menu" id="commandMenu" hidden></div>
+							<div class="popover slash-menu" id="slashMenu" hidden></div>
+						</div>
+					</footer>
+				</section>
+
+				<div class="plan-resizer" id="planResizer" role="separator" aria-orientation="vertical" aria-label="計画パネルの幅"></div>
+
+				<aside class="plan-panel" id="planPanel" aria-label="計画">
+					<div class="plan-head">
+						<svg class="icon" aria-hidden="true"><use href="#i-plan" /></svg>
+						<span class="plan-title" id="planTitle">計画</span>
+						<button class="ghost-icon plan-close" id="planClose" type="button" aria-label="閉じる">
+							<svg class="icon"><use href="#i-x" /></svg>
+						</button>
+					</div>
+					<ol class="plan-items" id="planItems" data-testid="plan-list"></ol>
+					<div class="plan-empty" id="planEmpty" aria-hidden="true">
+						<span></span><span></span><span></span>
+					</div>
+				</aside>
+			</div>
+
+			<div class="popover menu" id="modelMenu" hidden></div>
+			<div class="popover menu" id="thinkingMenu" hidden></div>
+			<div class="popover menu" id="settingsMenu" hidden></div>
+			<div class="popover menu" id="contextMenu" hidden></div>
+
+			<div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+			<div class="drawer-backdrop" id="planBackdrop" hidden></div>
+			<aside class="drawer" id="historyPanel" aria-label="履歴" hidden>
+				<div class="drawer-head">
+					<svg class="icon" aria-hidden="true"><use href="#i-history" /></svg>
+					<span class="drawer-grow" aria-hidden="true"></span>
+					<button class="select-toggle" id="historySelect" type="button" aria-pressed="false">選択</button>
+					<button class="ghost-icon" id="newChatButton" type="button" title="新しい会話" aria-label="新しい会話">
+						<svg class="icon"><use href="#i-plus" /></svg>
+					</button>
+					<button class="ghost-icon" id="historyClose" type="button" aria-label="閉じる">
+						<svg class="icon"><use href="#i-x" /></svg>
+					</button>
+				</div>
+				<div class="selection-bar" id="historyActions" hidden>
+					<button class="text-btn" id="historySelectAll" type="button">全選択</button>
+					<span class="selection-count" id="historyCount"></span>
+					<button class="danger-btn" id="historyDelete" type="button" disabled>削除</button>
+					<button class="text-btn" id="historyCancel" type="button">キャンセル</button>
+				</div>
+				<div class="session-list" id="sessionList"></div>
+			</aside>
+
+			<div class="dialog-layer" id="dialogLayer" hidden>
+				<div class="dialog" id="dialog" role="dialog" aria-modal="true"></div>
+			</div>
+
+			<div class="toasts" id="toasts" aria-live="polite"></div>
+		</div>
+
+		<script type="module" src="/app.js"></script>
+	</body>
+</html>
