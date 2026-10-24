@@ -2857,7 +2857,7 @@ function renderRunStatus() {
 
 function renderChrome() {
 	const project = state.cwd ? state.cwd.split(/[\\/]/).filter(Boolean).pop() : "";
-	dom.projectName.textContent = project || "Pi-dock";
+	dom.projectName.textContent = project;
 	dom.projectName.title = state.cwd;
 	dom.sessionName.textContent = state.sessionName;
 	dom.sessionName.title = state.sessionName;

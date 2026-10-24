@@ -55,7 +55,9 @@ async function rpc(command) {
 }
 
 test("loads the shell and enforces the token", async () => {
+	await expect(page.locator(".brand")).toContainText("Pi-dock");
 	await expect(page.locator("#projectName")).toHaveText("project");
+	await expect(page.locator(".top-actions > #projectName + #modelButton")).toHaveCount(1);
 	await expect(page.locator("#composer")).toBeVisible();
 	await expect(page.getByTestId("message-user")).toHaveCount(0);
 

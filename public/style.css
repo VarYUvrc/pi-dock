@@ -177,13 +177,23 @@ a:focus-visible {
 	stroke-linecap: round;
 }
 
+.app-name {
+	font-weight: 650;
+	letter-spacing: -0.01em;
+	white-space: nowrap;
+}
+
 .project {
 	font-weight: 650;
 	letter-spacing: -0.01em;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	max-width: 260px;
+	max-width: 200px;
+}
+
+.project:not(:empty) {
+	margin-right: 2px;
 }
 
 .session {
