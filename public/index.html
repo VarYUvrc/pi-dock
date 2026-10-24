@@ -62,18 +62,18 @@
 						<span id="projectLabel"></span>
 					</span>
 					<div class="model-group" id="modelGroup" role="group" aria-label="モデルと推論強度">
-						<button class="chip" id="modelButton" type="button" title="モデル" aria-haspopup="menu">
+						<button class="chip" id="modelButton" type="button" title="モデル" aria-haspopup="menu" aria-controls="modelMenu" aria-expanded="false">
 							<svg class="icon" aria-hidden="true"><use href="#i-model" /></svg>
 							<span id="modelLabel">—</span>
 							<svg class="icon chev" aria-hidden="true"><use href="#i-chevron" /></svg>
 						</button>
-						<button class="chip" id="thinkingButton" type="button" title="推論強度" aria-haspopup="menu">
+						<button class="chip" id="thinkingButton" type="button" title="推論強度" aria-haspopup="menu" aria-controls="thinkingMenu" aria-expanded="false">
 							<svg class="icon" aria-hidden="true"><use href="#i-spark" /></svg>
 							<span id="thinkingLabel">off</span>
 							<svg class="icon chev" aria-hidden="true"><use href="#i-chevron" /></svg>
 						</button>
 					</div>
-					<button class="ring-button" id="contextButton" type="button" title="コンテキスト">
+					<button class="ring-button" id="contextButton" type="button" title="コンテキスト" aria-haspopup="menu" aria-controls="contextMenu" aria-expanded="false">
 						<svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
 							<circle class="ring-bg" cx="10" cy="10" r="7.5" />
 							<circle class="ring-limit" id="ringLimit" cx="10" cy="10" r="7.5" />
@@ -87,7 +87,7 @@
 					<button class="icon-btn" id="historyButton" type="button" title="履歴" aria-label="履歴">
 						<svg class="icon"><use href="#i-history" /></svg>
 					</button>
-					<button class="icon-btn" id="settingsButton" type="button" title="設定" aria-label="設定">
+					<button class="icon-btn" id="settingsButton" type="button" title="設定" aria-label="設定" aria-haspopup="menu" aria-controls="settingsMenu" aria-expanded="false">
 						<svg class="icon"><use href="#i-settings" /></svg>
 					</button>
 				</div>
@@ -127,7 +127,7 @@
 								<div class="composer-bar">
 									<div class="composer-left">
 										<div class="composer-tools">
-											<button class="composer-tool" id="commandButton" type="button" title="コマンド" aria-label="コマンド" aria-expanded="false">
+											<button class="composer-tool" id="commandButton" type="button" title="コマンド" aria-label="コマンド" aria-haspopup="dialog" aria-controls="commandMenu" aria-expanded="false">
 												<svg class="icon"><use href="#i-plus" /></svg>
 											</button>
 											<button class="composer-tool" id="imageButton" type="button" title="画像を添付" aria-label="画像を添付">
@@ -158,7 +158,7 @@
 					</footer>
 				</section>
 
-				<div class="plan-resizer" id="planResizer" role="separator" aria-orientation="vertical" aria-label="計画パネルの幅"></div>
+				<div class="plan-resizer" id="planResizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="計画パネルの幅" aria-valuemin="220" aria-valuemax="640" aria-valuenow="284"></div>
 
 				<aside class="plan-panel" id="planPanel" aria-label="計画">
 					<div class="plan-head">

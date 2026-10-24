@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { agentDir } from "./sessions.js";
 
@@ -74,14 +75,26 @@ function safeInteger(value) {
 
 export async function describeCompaction({ cwd, env = process.env, model }) {
 	const path = settingsPath(env);
+	const projectPath = projectSettingsPath(cwd);
 	const user = await readSettings(path);
-	const project = await readSettings(projectSettingsPath(cwd));
+	const project = await readSettings(projectPath);
 	const compaction = mergeCompaction(user, project);
 	const key = modelKey(model);
 	const perModel =
 		key && compaction.modelOverrides?.[key] && typeof compaction.modelOverrides[key] === "object"
 			? compaction.modelOverrides[key]
 			: null;
+	const projectCompaction =
+		project?.compaction && typeof project.compaction === "object" ? project.compaction : null;
+	const projectModel =
+		key &&
+		projectCompaction?.modelOverrides?.[key] &&
+		typeof projectCompaction.modelOverrides[key] === "object"
+			? projectCompaction.modelOverrides[key]
+			: null;
+	const projectReserve = safeInteger(
+		projectModel?.reserveTokens ?? projectCompaction?.reserveTokens,
+	);
 	const reserveTokens =
 		safeInteger(perModel?.reserveTokens) ??
 		safeInteger(compaction.reserveTokens) ??
@@ -95,6 +108,8 @@ export async function describeCompaction({ cwd, env = process.env, model }) {
 	return {
 		enabled: compaction.enabled !== false,
 		settingsPath: path,
+		projectSettingsPath: projectPath,
+		projectOverridesReserve: projectReserve !== null,
 		modelKey: key,
 		reserveTokens,
 		keepRecentTokens,
@@ -102,7 +117,14 @@ export async function describeCompaction({ cwd, env = process.env, model }) {
 		thresholdPercent:
 			contextWindow && thresholdTokens !== null ? (thresholdTokens / contextWindow) * 100 : null,
 		contextWindow,
-		reserveSource: perModel?.reserveTokens !== undefined ? "model" : "default",
+		reserveSource:
+			perModel?.reserveTokens !== undefined
+				? projectModel?.reserveTokens !== undefined
+					? "project-model"
+					: "model"
+				: projectCompaction?.reserveTokens !== undefined
+					? "project"
+					: "default",
 		modelOverride: perModel ? { ...perModel } : null,
 	};
 }
@@ -198,6 +220,19 @@ async function writeSettings(path, settings) {
 		if (error.code !== "ENOENT") throw error;
 	}
 	if (current === body) return;
+	let mode = 0o600;
+	try {
+		mode = (await stat(path)).mode & 0o777;
+	} catch (error) {
+		if (error.code !== "ENOENT") throw error;
+	}
 	await mkdir(dirname(path), { recursive: true });
-	await writeFile(path, body, "utf8");
+	const temporaryPath = `${path}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+	try {
+		await writeFile(temporaryPath, body, { encoding: "utf8", mode });
+		if (process.platform !== "win32") await chmod(temporaryPath, mode);
+		await rename(temporaryPath, path);
+	} finally {
+		await unlink(temporaryPath).catch(() => {});
+	}
 }

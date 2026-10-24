@@ -28,6 +28,13 @@ const PLAN_EXTENSION = join(
 const MAX_BODY = 12 * 1024 * 1024;
 const HEARTBEAT_MS = 25_000;
 
+const RPC_TIMEOUTS = {
+	abort: 90_000,
+	compact: 600_000,
+	export_html: 120_000,
+};
+const DEFAULT_RPC_TIMEOUT = 60_000;
+
 const ASSETS = {
 	"/": ["index.html", "text/html; charset=utf-8"],
 	"/index.html": ["index.html", "text/html; charset=utf-8"],
@@ -132,6 +139,7 @@ export async function createDock({
 
 	const clients = new Set();
 	const runtimes = new Map();
+	const startingSessions = new Map();
 	let activeRuntime = null;
 	let runtimeSequence = 0;
 	let closing = false;
@@ -190,6 +198,9 @@ export async function createDock({
 			startedAt: Date.now(),
 			exit: null,
 			pendingUi: new Map(),
+			statuses: {},
+			widgets: {},
+			extensionTitle: "",
 		};
 		runtimes.set(id, runtime);
 		bridge.on("record", (record) => onRuntimeRecord(runtime, record));
@@ -218,6 +229,23 @@ export async function createDock({
 			["select", "confirm", "input", "editor"].includes(record.method)
 		) {
 			runtime.pendingUi.set(record.id, record);
+		}
+		if (record.type === "extension_ui_request") {
+			if (record.method === "setStatus") {
+				if (record.statusText) runtime.statuses[record.statusKey] = record.statusText;
+				else delete runtime.statuses[record.statusKey];
+			}
+			if (record.method === "setWidget") {
+				const key = record.widgetKey ?? "widget";
+				if (Array.isArray(record.widgetLines) && record.widgetLines.length) {
+					runtime.widgets[key] = record.widgetLines.join("\n");
+				} else {
+					delete runtime.widgets[key];
+				}
+			}
+			if (record.method === "setTitle") {
+				runtime.extensionTitle = record.title || "";
+			}
 		}
 
 		if (runtime !== activeRuntime) {
@@ -278,6 +306,10 @@ export async function createDock({
 		runtime.running = false;
 		runtime.runStartedAt = null;
 		runtime.exit = info;
+		runtime.pendingUi.clear();
+		runtime.statuses = {};
+		runtime.widgets = {};
+		runtime.extensionTitle = "";
 		if (runtime === activeRuntime) {
 			broadcast({ type: "dock:exit", runtime: runtime.id, reason: info.reason });
 			return;
@@ -310,9 +342,27 @@ export async function createDock({
 	function findRuntimeByPath(path) {
 		const key = sessionKey(path);
 		for (const runtime of runtimes.values()) {
+			if (runtime.exit) continue;
 			if (runtime.sessionFile && sessionKey(runtime.sessionFile) === key) return runtime;
 		}
 		return null;
+	}
+
+	async function runtimeForPath(path) {
+		const existing = findRuntimeByPath(path);
+		if (existing) return existing;
+		const key = sessionKey(path);
+		let pending = startingSessions.get(key);
+		if (!pending) {
+			pending = startRuntime({ sessionPath: path });
+			startingSessions.set(key, pending);
+			pending.then(
+				() => startingSessions.delete(key),
+				() => startingSessions.delete(key),
+			);
+		}
+		const runtime = await pending;
+		return findRuntimeByPath(path) ?? runtime;
 	}
 
 	function requireRuntime() {
@@ -412,6 +462,9 @@ export async function createDock({
 			commands: commands?.commands ?? [],
 			plan: entries ? planFromEntries(entries.entries, entries.leafId) : null,
 			pendingUi: [...runtime.pendingUi.values()],
+			statuses: { ...runtime.statuses },
+			widgets: { ...runtime.widgets },
+			extensionTitle: runtime.extensionTitle,
 			compaction,
 		};
 	}
@@ -438,6 +491,10 @@ export async function createDock({
 		if (command.type === "dock:restart") {
 			const runtime = activeRuntime;
 			if (!runtime) throw new Error("Pi に接続されていません");
+			runtime.pendingUi.clear();
+			runtime.statuses = {};
+			runtime.widgets = {};
+			runtime.extensionTitle = "";
 			runtime.exit = null;
 			await runtime.bridge.restart();
 			await waitForPi(runtime.bridge);
@@ -515,9 +572,7 @@ export async function createDock({
 		}
 		if (command.type === "switch_session") {
 			if (typeof command.sessionPath !== "string") throw new Error("パスが不正です");
-			const runtime =
-				findRuntimeByPath(command.sessionPath) ??
-				(await startRuntime({ sessionPath: command.sessionPath }));
+			const runtime = await runtimeForPath(command.sessionPath);
 			activateRuntime(runtime);
 			return { cancelled: false, runtime: runtime.id };
 		}
@@ -542,7 +597,7 @@ export async function createDock({
 			const runtime = command.runtimeId
 				? runtimes.get(String(command.runtimeId))
 				: requireRuntime();
-			if (!runtime) throw new Error("セッションが見つかりません");
+			if (!runtime || runtime.exit) throw new Error("セッションが見つかりません");
 			const response = {
 				type: "extension_ui_response",
 				id: command.id,
@@ -587,7 +642,7 @@ export async function createDock({
 			payload.customInstructions = command.customInstructions;
 		}
 		return await requireRuntime().bridge.request(payload, {
-			timeout: command.type === "abort" ? 90_000 : 60_000,
+			timeout: RPC_TIMEOUTS[command.type] ?? DEFAULT_RPC_TIMEOUT,
 		});
 	}
 
@@ -783,6 +838,7 @@ export async function createDock({
 	try {
 		activateRuntime(await startRuntime({ initial: true }));
 	} catch (error) {
+		clearInterval(heartbeat);
 		server.close();
 		throw error;
 	}

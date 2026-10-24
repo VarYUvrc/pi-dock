@@ -2065,6 +2065,12 @@ body.resizing-plan * {
 	margin-top: 2px;
 }
 
+.compaction-note {
+	padding: 2px 8px 4px;
+	font-size: 11px;
+	color: var(--text-3);
+}
+
 .compaction-actions {
 	display: flex;
 	gap: 4px;
@@ -2278,6 +2284,11 @@ body.resizing-plan * {
 	flex-direction: column;
 	gap: 2px;
 	min-width: 0;
+	cursor: pointer;
+}
+
+.session-item.selecting .session-main {
+	cursor: default;
 }
 
 .session-check {
@@ -2382,6 +2393,21 @@ body.resizing-plan * {
 	text-align: center;
 	font-size: 12.5px;
 	color: var(--text-3);
+}
+
+.session-more {
+	margin: 6px 8px 0;
+	padding: 9px 12px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: transparent;
+	color: var(--text-2);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.session-more:hover {
+	background: var(--surface);
 }
 
 /* ----------------------------------------------------------------- dialog */

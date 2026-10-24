@@ -389,6 +389,36 @@ test("sets per-model compaction in Pi settings without losing other settings", a
 	expect(saved.compaction.keepRecentTokens).toBe(12_345);
 });
 
+test("shows when project compaction settings take precedence", async () => {
+	await mkdir(join(workspace.project, ".pi"), { recursive: true });
+	await writeFile(
+		join(workspace.project, ".pi", "settings.json"),
+		`${JSON.stringify(
+			{
+				compaction: {
+					modelOverrides: { "fake/fake-fast": { reserveTokens: 16_000 } },
+				},
+			},
+			null,
+			2,
+		)}\n`,
+	);
+	await page.reload();
+	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+	await page.locator("#contextButton").click();
+	await expect(page.getByTestId("compaction-project-note")).toBeVisible();
+	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
+
+	await page.getByTestId("compaction-25").click();
+	await expect(
+		page.getByTestId("toast").filter({ hasText: "プロジェクト設定が優先" }),
+	).toBeVisible();
+	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
+
+	const saved = JSON.parse(await readFile(join(workspace.agent, "settings.json"), "utf8"));
+	expect(saved.compaction.modelOverrides["fake/fake-fast"].reserveTokens).toBe(24_000);
+});
+
 test("Enter inserts a newline and never sends", async () => {
 	await input().fill("line1");
 	await input().press("Enter");
@@ -601,6 +631,20 @@ test("attaches, pastes, drops and sends images", async () => {
 	await expect(page.getByTestId("message-user").locator("img")).toHaveCount(2);
 });
 
+test("keeps attachments when the model changes", async () => {
+	await page.locator("#imageInput").setInputFiles({
+		name: "keep.png",
+		mimeType: "image/png",
+		buffer: Buffer.from(PNG_BASE64, "base64"),
+	});
+	await expect(page.getByTestId("attachment")).toHaveCount(1);
+
+	await page.locator("#modelButton").click();
+	await page.getByTestId("model-item").filter({ hasText: "Fake Reasoner" }).click();
+	await expect(page.locator("#modelLabel")).toHaveText("Fake Reasoner");
+	await expect(page.getByTestId("attachment")).toHaveCount(1);
+});
+
 test("chooses steer or follow-up while a response is running", async () => {
 	await send("long please");
 	await expect(page.getByTestId("message-live")).toContainText("chunk 2");
@@ -622,6 +666,25 @@ test("chooses steer or follow-up while a response is running", async () => {
 	await expectDone();
 	await expect(input()).toHaveValue("now this\nafter this");
 	await expect(mode).toBeHidden();
+});
+
+test("keeps consecutive steer messages in the order they were sent", async () => {
+	await send("long please");
+	await expect(page.getByTestId("message-live")).toContainText("chunk 2");
+
+	await input().fill("first steer");
+	await input().press("Control+Enter");
+	await expect(page.locator("#queueBadge")).toHaveText("1 待機");
+	await input().fill("second steer");
+	await input().press("Control+Enter");
+	await expect(page.locator("#queueBadge")).toHaveText("2 待機");
+	await expectDone();
+
+	const users = page.getByTestId("message-user");
+	await expect(users).toHaveCount(3);
+	await expect(users.nth(0)).toHaveText("long please");
+	await expect(users.nth(1)).toHaveText("first steer");
+	await expect(users.nth(2)).toHaveText("second steer");
 });
 
 test("shows, advances and clears the agent plan", async () => {
@@ -731,6 +794,11 @@ test("resizes the plan panel by dragging its edge", async () => {
 		() => JSON.parse(localStorage.getItem("pi-dock:settings")).planWidth,
 	);
 	expect(stored).toBeGreaterThan(initial + 60);
+
+	const resized = (await panel.boundingBox()).width;
+	await page.locator("#planResizer").focus();
+	await page.keyboard.press("ArrowLeft");
+	await expect.poll(async () => (await panel.boundingBox()).width).toBeGreaterThan(resized + 8);
 });
 
 test("opens the plan in a drawer on narrow screens", async () => {
@@ -898,6 +966,11 @@ test("selects and deletes all history beyond the old 60 item limit", async () =>
 	}
 	await page.locator("#historyButton").click();
 	await expect(page.locator("#sessionList")).toHaveAttribute("data-total", "65");
+	await expect(page.getByTestId("session-item")).toHaveCount(50);
+	await expect(page.getByTestId("session-more")).toBeVisible();
+	await page.getByTestId("session-more").click();
+	await expect(page.getByTestId("session-item")).toHaveCount(65);
+	await expect(page.getByTestId("session-more")).toHaveCount(0);
 	await page.locator("#historySelect").click();
 	await page.locator("#historySelectAll").click();
 	await expect(page.locator("#historyCount")).toHaveText("64 件");
@@ -964,6 +1037,7 @@ test("answers extension dialogs through RPC", async () => {
 	const dialog = page.locator("#dialog");
 	await expect(dialog).toBeVisible();
 	await expect(dialog).toContainText("実行しますか？");
+	await expect(dialog.getByRole("button", { name: "はい" })).toBeFocused();
 	await dialog.getByRole("button", { name: "はい" }).click();
 	await expect(page.locator("#dialogLayer")).toBeHidden();
 	await expect(page.getByTestId("message-assistant").last()).toContainText("confirmed=true");
@@ -974,12 +1048,75 @@ test("answers extension dialogs through RPC", async () => {
 	await expect(page.getByTestId("message-assistant").last()).toContainText("confirmed=false");
 });
 
+test("drops pending extension dialogs when Pi restarts", async () => {
+	await send("please ask");
+	await expect(page.locator("#dialog")).toBeVisible();
+	const before = await rpc({ type: "dock:snapshot" });
+	expect(before.ok).toBe(true);
+	expect(before.data.pendingUi).toHaveLength(1);
+
+	const restarted = await rpc({ type: "dock:restart" });
+	expect(restarted.ok).toBe(true);
+	const after = await rpc({ type: "dock:snapshot" });
+	expect(after.ok).toBe(true);
+	expect(after.data.pendingUi).toHaveLength(0);
+});
+
+test("keeps extension titles across agent events", async () => {
+	await send("settitle");
+	await expect(page).toHaveTitle("拡張タイトル");
+	await expect(page.getByTestId("message-assistant").last()).toContainText(
+		"タイトルを設定しました。",
+	);
+	await expectDone();
+
+	await send("hello");
+	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
+		timeout: 10_000,
+	});
+	await expectDone();
+	await expect(page).toHaveTitle("拡張タイトル");
+});
+
+test("clears extension status and widgets when switching sessions", async () => {
+	await send("statuswidget");
+	await expect(page.locator("#composerLeft .meta-chip")).toHaveText("拡張ステータス");
+	await expect(page.locator("#widgets")).toContainText("ウィジェット表示");
+	await expectDone();
+
+	await page.locator("#historyButton").click();
+	await page.locator("#newChatButton").click();
+	await expect(page.getByTestId("message-user")).toHaveCount(0);
+	await expect(page.locator("#composerLeft .meta-chip")).toHaveCount(0);
+	await expect(page.locator("#widgets")).toBeHidden();
+});
+
 test("stops a running response", async () => {
 	await send("long please");
 	await expect(page.getByTestId("message-live")).toContainText("chunk 3");
 	await page.locator("#stopButton").click();
 	await expectDone();
 	await expect(page.getByTestId("message-live")).toHaveCount(0);
+});
+
+test("keeps completed messages in place when another run starts", async () => {
+	await send("hello");
+	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
+		timeout: 10_000,
+	});
+	await expectDone();
+
+	const first = page.getByTestId("message-assistant").first();
+	await first.evaluate((node) => {
+		node.dataset.stabilityCheck = "kept";
+	});
+
+	await send("hello again");
+	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
+		timeout: 10_000,
+	});
+	await expectDone();
+	await expect(first).toHaveAttribute("data-stability-check", "kept");
 });
 
 test("reload during streaming restores the run", async () => {

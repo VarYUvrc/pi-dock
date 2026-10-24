@@ -23,8 +23,6 @@ function safeHref(url) {
 
 const COPY_ICON =
 	'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
-const CHECK_ICON =
-	'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 13 4 4L19 7"/></svg>';
 
 function emphasize(text) {
 	return text
@@ -244,6 +242,3 @@ export function renderMarkdown(markdown) {
 
 	return output.join("");
 }
-
-/** Replace the copy button icon after a successful copy. */
-export const icons = { copy: COPY_ICON, check: CHECK_ICON };

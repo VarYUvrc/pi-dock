@@ -440,6 +440,7 @@ async function prompt(message, images = []) {
 	write({ type: "agent_start" });
 	try {
 		await promptInner(message, images);
+		await flushQueue();
 	} finally {
 		const aborted = session.aborted;
 		session.running = false;
@@ -447,6 +448,21 @@ async function prompt(message, images = []) {
 		write({ type: "agent_end", messages: [], willRetry: false });
 		write({ type: "agent_settled", aborted });
 		session.aborted = false;
+	}
+}
+
+async function flushQueue() {
+	if (session.aborted) return;
+	const queued = [...session.steering, ...session.followUp];
+	if (!queued.length) return;
+	session.steering = [];
+	session.followUp = [];
+	write({ type: "queue_update", steering: [], followUp: [] });
+	for (const text of queued) {
+		const message = user(text);
+		write({ type: "message_start", message });
+		write({ type: "message_end", message });
+		pushMessage(message);
 	}
 }
 
@@ -458,6 +474,36 @@ async function promptInner(message, images = []) {
 
 	if (message.startsWith("/")) {
 		await streamAssistant([{ type: "text", text: `command accepted: ${message.split(/\s/)[0]}` }]);
+		return;
+	}
+
+	if (message.includes("settitle")) {
+		write({
+			type: "extension_ui_request",
+			id: `ui_${++session.sequence}`,
+			method: "setTitle",
+			title: "拡張タイトル",
+		});
+		await streamAssistant([{ type: "text", text: "タイトルを設定しました。" }]);
+		return;
+	}
+
+	if (message.includes("statuswidget")) {
+		write({
+			type: "extension_ui_request",
+			id: `ui_${++session.sequence}`,
+			method: "setStatus",
+			statusKey: "demo",
+			statusText: "拡張ステータス",
+		});
+		write({
+			type: "extension_ui_request",
+			id: `ui_${++session.sequence}`,
+			method: "setWidget",
+			widgetKey: "demo",
+			widgetLines: ["ウィジェット表示"],
+		});
+		await streamAssistant([{ type: "text", text: "状態を設定しました。" }]);
 		return;
 	}
 
