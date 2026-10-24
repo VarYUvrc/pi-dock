@@ -2701,9 +2701,29 @@ function workHeading(items, status) {
 	for (const item of items) {
 		if (item.kind !== "thinking") continue;
 		const line = meaningfulLine(item.text);
-		if (line) return line;
+		if (line) return { text: line, title: line };
 	}
-	return status === "error" ? "エラー" : "作業";
+
+	const names = [];
+	for (const item of items) {
+		if (item.kind !== "tool") continue;
+		const name = String(item.tool?.name ?? "").trim();
+		if (name && !names.includes(name)) names.push(name);
+	}
+	if (names.length) {
+		const shown = names.slice(0, 3);
+		const rest = names.length - shown.length;
+		return {
+			text: `${shown.join("・")}${rest ? ` ほか${rest}件` : ""}`,
+			title: names.join("・"),
+		};
+	}
+
+	if (items.some((item) => item.kind === "thinking")) {
+		return { text: "思考", title: "思考" };
+	}
+	const fallback = { running: "実行中", error: "エラー", done: "完了" }[status] ?? "完了";
+	return { text: fallback, title: fallback };
 }
 
 function toolKind(name) {
@@ -2750,7 +2770,7 @@ function workToolKinds(items) {
 
 function workMarkup(items, key, prefix) {
 	const status = workStatus(items);
-	const label = workHeading(items, status);
+	const heading = workHeading(items, status);
 	const statuses = items.map((item) => item.status);
 	const shown = statuses.slice(-12);
 	if (statuses.length > 12 && status === "error" && !shown.includes("error")) shown[0] = "error";
@@ -2783,8 +2803,8 @@ function workMarkup(items, key, prefix) {
 	}>
 		<summary>
 			<svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg>
+			<span class="work-label" title="${escapeHtml(heading.title)}">${escapeHtml(heading.text)}</span>
 			<span class="work-rail" aria-hidden="true">${rail}</span>
-			<span class="work-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
 			${tools}
 			${status === "error" ? '<svg class="icon work-alert" aria-hidden="true"><use href="#i-alert"/></svg>' : ""}
 		</summary>
@@ -2909,7 +2929,7 @@ function reuseLiveWork(oldMount, node) {
 		const oldAlert = oldSummary?.querySelector(".work-alert");
 		const freshAlert = freshSummary?.querySelector(".work-alert");
 		if (freshAlert && !oldAlert) {
-			oldSummary.insertBefore(freshAlert, oldSummary.querySelector(".chev"));
+			oldSummary.append(freshAlert);
 		} else if (!freshAlert && oldAlert) {
 			oldAlert.remove();
 		}

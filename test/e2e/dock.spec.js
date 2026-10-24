@@ -144,7 +144,7 @@ test("streams a reply with thinking, tools, markdown and copy", async () => {
 	await expect(work).toHaveAttribute("data-status", "done");
 	expect(await work.evaluate((node) => node.open)).toBe(false);
 	await expect(work.locator(".work-dot.done")).toHaveCount(1);
-	await expect(work.locator(".work-label")).toHaveText("作業");
+	await expect(work.locator(".work-label")).toHaveText("bash");
 	await expect(work.locator(".work-count, .work-meta")).toHaveCount(0);
 	await work.locator("summary").first().click();
 
@@ -181,21 +181,34 @@ test("groups multiple tools into a stable work rail and keeps failures visible",
 	const work = groups.last();
 	await expect(work).toHaveAttribute("data-status", "done");
 	await expect(work.locator(".work-dot.done")).toHaveCount(3);
-	await expect(work.locator(".work-label")).toHaveText("作業");
+	await expect(work.locator(".work-label")).toHaveText("bash・read・grep");
+	await expect(work.locator(".work-label")).toHaveAttribute("title", "bash・read・grep");
 	const railWidth = await work
 		.locator(".work-rail")
 		.evaluate((node) => node.getBoundingClientRect().width);
 	expect(railWidth).toBeGreaterThan(0);
 	const indicators = await groups.evaluateAll((nodes) =>
 		nodes.map((node) => {
-			const rail = node.querySelector(".work-rail").getBoundingClientRect();
-			const chev = node.querySelector("summary > .chev").getBoundingClientRect();
-			const label = node.querySelector(".work-label").getBoundingClientRect();
-			return { railLeft: Math.round(rail.left), chevRight: chev.right, labelLeft: label.left };
+			const bounds = (selector) => node.querySelector(selector)?.getBoundingClientRect() ?? null;
+			const chev = bounds("summary > .chev");
+			const label = bounds(".work-label");
+			const rail = bounds(".work-rail");
+			const tools = bounds(".work-tools");
+			return {
+				chevRight: chev.right,
+				labelLeft: label.left,
+				labelRight: label.right,
+				railLeft: rail.left,
+				railRight: rail.right,
+				toolsLeft: tools?.left ?? null,
+			};
 		}),
 	);
-	expect(new Set(indicators.map((item) => item.railLeft)).size).toBe(1);
-	for (const item of indicators) expect(item.chevRight).toBeLessThan(item.labelLeft);
+	for (const item of indicators) {
+		expect(item.chevRight).toBeLessThan(item.labelLeft);
+		expect(item.railLeft).toBeGreaterThanOrEqual(item.labelRight);
+		if (item.toolsLeft !== null) expect(item.toolsLeft).toBeGreaterThanOrEqual(item.railRight);
+	}
 	await work.locator("summary").first().click();
 	await expect(work.getByTestId("tool")).toHaveCount(3);
 	await expect(work.getByTestId("tool").first()).toContainText("echo one");
@@ -207,9 +220,16 @@ test("groups multiple tools into a stable work rail and keeps failures visible",
 	await expectDone();
 	const failed = page.getByTestId("work-group").last();
 	await expect(failed).toHaveAttribute("data-status", "error");
-	await expect(failed).toContainText("エラー");
+	await expect(failed.locator(".work-label")).toHaveText("bash");
 	await expect(failed.locator(".work-rail .work-dot.error")).toHaveCount(1);
 	await expect(failed.locator(".work-alert")).toBeVisible();
+	expect(
+		await failed.evaluate((node) => {
+			const tools = node.querySelector(".work-tools").getBoundingClientRect();
+			const alert = node.querySelector(".work-alert").getBoundingClientRect();
+			return alert.left >= tools.right;
+		}),
+	).toBe(true);
 	expect(await failed.evaluate((node) => node.open)).toBe(false);
 	await failed.locator("summary").first().click();
 	await expect(failed.getByTestId("tool").first()).toContainText("exit 1");
@@ -245,7 +265,7 @@ test("dedupes tool kinds and keeps consecutive work cards compact", async () => 
 	expect(gap).toBeLessThan(20);
 });
 
-test("uses reasoning as the work heading and falls back quietly", async () => {
+test("uses reasoning, then tool names, then plain-thinking labels", async () => {
 	await send("reason");
 	await expect(page.getByTestId("message-assistant").last()).toContainText("理由を確認しました。", {
 		timeout: 10_000,
@@ -265,8 +285,17 @@ test("uses reasoning as the work heading and falls back quietly", async () => {
 	});
 	await expectDone();
 	const silent = page.getByTestId("work-group").last();
-	await expect(silent.locator(".work-label")).toHaveText("作業");
+	await expect(silent.locator(".work-label")).toHaveText("bash");
 	await expect(silent.locator(".work-dot.done")).toHaveCount(1);
+
+	await send("blankthink");
+	await expect(page.getByTestId("message-assistant").last()).toContainText(
+		"思考だけを確認しました。",
+		{ timeout: 10_000 },
+	);
+	await expectDone();
+	const blank = page.getByTestId("work-group").last();
+	await expect(blank.locator(".work-label")).toHaveText("思考");
 });
 
 test("keeps an open live work group stable while its heading streams", async () => {

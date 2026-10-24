@@ -1065,6 +1065,7 @@ body.resizing-plan * {
 .work-rail {
 	display: inline-flex;
 	align-items: center;
+	justify-content: flex-end;
 	gap: 2px;
 	width: 82px;
 	flex: none;

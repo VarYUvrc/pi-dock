@@ -452,6 +452,12 @@ async function promptInner(message, images = []) {
 		return;
 	}
 
+	if (message.includes("blankthink")) {
+		await streamAssistant([{ type: "thinking", text: "```\n```" }]);
+		await streamAssistant([{ type: "text", text: "思考だけを確認しました。" }]);
+		return;
+	}
+
 	if (message.includes("reason")) {
 		const { calls } = await streamAssistant([
 			{
