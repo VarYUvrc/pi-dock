@@ -16,6 +16,7 @@ const ASSETS = {
 	"/index.html": ["index.html", "text/html; charset=utf-8"],
 	"/app.js": ["app.js", "text/javascript; charset=utf-8"],
 	"/markdown.js": ["markdown.js", "text/javascript; charset=utf-8"],
+	"/theme-init.js": ["theme-init.js", "text/javascript; charset=utf-8"],
 	"/style.css": ["style.css", "text/css; charset=utf-8"],
 };
 

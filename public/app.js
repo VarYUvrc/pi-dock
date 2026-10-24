@@ -2,7 +2,8 @@ import { escapeHtml, renderMarkdown } from "./markdown.js";
 
 const TOKEN = new URLSearchParams(location.search).get("token") ?? "";
 const STORAGE_KEY = "pi-dock:settings";
-const DEFAULT_SETTINGS = { ctrlEnterSend: true };
+const DEFAULT_SETTINGS = { ctrlEnterSend: true, theme: "system" };
+const THEMES = ["system", "light", "dark"];
 const MAX_TOOL_OUTPUT = 40_000;
 
 const $ = (id) => document.getElementById(id);
@@ -99,7 +100,11 @@ function loadSettings() {
 		if (!raw) return { ...DEFAULT_SETTINGS };
 		const parsed = JSON.parse(raw);
 		if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SETTINGS };
-		return { ...DEFAULT_SETTINGS, ctrlEnterSend: parsed.ctrlEnterSend !== false };
+		return {
+			...DEFAULT_SETTINGS,
+			ctrlEnterSend: parsed.ctrlEnterSend !== false,
+			theme: THEMES.includes(parsed.theme) ? parsed.theme : "system",
+		};
 	} catch {
 		return { ...DEFAULT_SETTINGS };
 	}
@@ -107,11 +112,29 @@ function loadSettings() {
 
 function saveSettings() {
 	try {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify({ ctrlEnterSend: settings.ctrlEnterSend }));
+		localStorage.setItem(
+			STORAGE_KEY,
+			JSON.stringify({ ctrlEnterSend: settings.ctrlEnterSend, theme: settings.theme }),
+		);
 	} catch {
 		/* storage may be unavailable */
 	}
 }
+
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+function applyTheme() {
+	const resolved =
+		settings.theme === "system" ? (darkQuery.matches ? "dark" : "light") : settings.theme;
+	document.documentElement.dataset.theme = resolved;
+}
+
+function onSystemSchemeChange() {
+	if (settings.theme === "system") applyTheme();
+}
+
+if (darkQuery.addEventListener) darkQuery.addEventListener("change", onSystemSchemeChange);
+else darkQuery.addListener(onSystemSchemeChange);
 
 async function api(command) {
 	const response = await fetch("/api/rpc", {
@@ -1082,7 +1105,21 @@ function renderThinkingMenu() {
 }
 
 function renderSettingsMenu() {
+	const themeOptions = [
+		["system", "i-monitor", "システム"],
+		["light", "i-sun", "ライト"],
+		["dark", "i-moon", "ダーク"],
+	]
+		.map(
+			([value, icon, label]) =>
+				`<button type="button" data-theme-option="${value}" aria-pressed="${settings.theme === value}" aria-label="${label}" title="${label}"><svg class="icon" aria-hidden="true"><use href="#${icon}"/></svg></button>`,
+		)
+		.join("");
 	dom.settingsMenu.innerHTML = `<div class="setting-row">
+		<span>テーマ</span>
+		<div class="segmented" role="group" aria-label="テーマ">${themeOptions}</div>
+	</div>
+	<div class="setting-row">
 		<span>Ctrl+Enter で送信</span>
 		<button type="button" class="switch" role="switch" aria-checked="${settings.ctrlEnterSend}" aria-label="Ctrl+Enterで送信" data-testid="ctrl-enter-toggle"></button>
 	</div>
@@ -1129,6 +1166,18 @@ dom.thinkingMenu.addEventListener("click", (event) => {
 });
 
 dom.settingsMenu.addEventListener("click", (event) => {
+	const themeButton = event.target.closest("[data-theme-option]");
+	if (themeButton) {
+		const next = themeButton.dataset.themeOption;
+		if (!THEMES.includes(next) || settings.theme === next) return;
+		settings.theme = next;
+		saveSettings();
+		applyTheme();
+		for (const button of dom.settingsMenu.querySelectorAll("[data-theme-option]")) {
+			button.setAttribute("aria-pressed", String(button.dataset.themeOption === next));
+		}
+		return;
+	}
 	const toggle = event.target.closest(".switch");
 	if (!toggle) return;
 	settings.ctrlEnterSend = !settings.ctrlEnterSend;
@@ -1745,6 +1794,7 @@ for (const container of [dom.messageList, dom.liveMount]) {
 /* ------------------------------------------------------------------- boot */
 
 async function boot() {
+	applyTheme();
 	renderChrome();
 	renderLive();
 	renderRunStatus();

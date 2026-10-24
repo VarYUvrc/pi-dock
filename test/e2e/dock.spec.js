@@ -146,12 +146,35 @@ test("Ctrl+Enter setting is honoured and persisted", async () => {
 	const writes = await page.evaluate(() => window.__storageWrites);
 	expect(writes).toBe(1);
 	const stored = await page.evaluate(() => localStorage.getItem("pi-dock:settings"));
-	expect(JSON.parse(stored)).toEqual({ ctrlEnterSend: false });
+	expect(JSON.parse(stored)).toEqual({ ctrlEnterSend: false, theme: "system" });
 
 	await page.reload();
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
 	await page.locator("#settingsButton").click();
 	await expect(page.getByTestId("ctrl-enter-toggle")).toHaveAttribute("aria-checked", "false");
+});
+
+test("switches theme and follows the system when asked", async () => {
+	const html = page.locator("html");
+	await expect(html).toHaveAttribute("data-theme", "light");
+	await page.locator("#settingsButton").click();
+	await expect(page.locator('[data-theme-option="system"]')).toHaveAttribute("aria-pressed", "true");
+	await page.locator('[data-theme-option="dark"]').click();
+	await expect(html).toHaveAttribute("data-theme", "dark");
+	await expect(page.locator("body")).toHaveCSS("background-color", "rgb(20, 19, 18)");
+
+	await page.reload();
+	await expect(html).toHaveAttribute("data-theme", "dark");
+	await page.locator("#settingsButton").click();
+	await expect(page.locator('[data-theme-option="dark"]')).toHaveAttribute("aria-pressed", "true");
+
+	await page.emulateMedia({ colorScheme: "light" });
+	await expect(html).toHaveAttribute("data-theme", "dark");
+	await page.locator('[data-theme-option="system"]').click();
+	await expect(html).toHaveAttribute("data-theme", "light");
+	await page.emulateMedia({ colorScheme: "dark" });
+	await expect(html).toHaveAttribute("data-theme", "dark");
+	await page.emulateMedia({ colorScheme: "light" });
 });
 
 test("slash menu lists live Pi commands and inserts one", async () => {
