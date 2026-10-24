@@ -14,7 +14,6 @@ const STATUSES = ["pending", "in_progress", "done", "cancelled"] as const;
 type PlanStatus = (typeof STATUSES)[number];
 
 const PLAN_STATE_ENTRY = "dock_plan_state";
-const MUTATING_TOOLS = new Set(["edit", "write", "bash", "powershell"]);
 
 interface PlanItem {
 	id: string;
@@ -70,25 +69,6 @@ function clonePlan(plan: PlanState): PlanState {
 	};
 }
 
-/** Move a single step forward when the model forgot to update the plan. */
-function advancePlan(plan: PlanState): PlanState | null {
-	const active = plan.items.findIndex((item) => item.status === "in_progress");
-	if (active === -1) return null;
-	const next = plan.items.findIndex(
-		(item, index) => index > active && item.status === "pending",
-	);
-	// Leave the final step to the model so completion stays explicit.
-	if (next === -1) return null;
-	const items = plan.items.map((item) => ({ ...item }));
-	items[active].status = "done";
-	items[next].status = "in_progress";
-	return {
-		...(plan.title ? { title: plan.title } : {}),
-		items,
-		nextId: plan.nextId,
-	};
-}
-
 function formatPlan(plan: PlanState): string {
 	const lines = plan.title ? [plan.title] : [];
 	for (const item of plan.items) {
@@ -124,7 +104,6 @@ function planFromDetails(details: unknown): PlanState | null {
 
 export default function (pi: ExtensionAPI) {
 	let plan: PlanState = { items: [], nextId: 1 };
-	let planTouchedThisTurn = false;
 
 	const reconstruct = (ctx: ExtensionContext) => {
 		plan = { items: [], nextId: 1 };
@@ -145,28 +124,6 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => reconstruct(ctx));
 	pi.on("session_tree", async (_event, ctx) => reconstruct(ctx));
 
-	pi.on("turn_start", () => {
-		planTouchedThisTurn = false;
-	});
-
-	// Models often leave the first step in_progress while doing later work and
-	// mark everything done at the end. Advance one step per turn that changed
-	// files or ran a command and did not touch the plan, so the panel fills
-	// gradually without advancing on read-only follow-up questions.
-	pi.on("turn_end", (event) => {
-		const touched = planTouchedThisTurn;
-		planTouchedThisTurn = false;
-		if (touched) return;
-		const worked = event.toolResults.some(
-			(result) => MUTATING_TOOLS.has(result.toolName) && !result.isError,
-		);
-		if (!worked) return;
-		const next = advancePlan(plan);
-		if (!next) return;
-		plan = next;
-		pi.appendEntry(PLAN_STATE_ENTRY, clonePlan(plan));
-	});
-
 	pi.registerTool({
 		name: "dock_plan",
 		label: "Plan",
@@ -181,7 +138,6 @@ export default function (pi: ExtensionAPI) {
 		parameters: PlanParams,
 
 		async execute(_toolCallId, params) {
-			planTouchedThisTurn = true;
 			const snapshot = () => clonePlan(plan);
 			const fail = (message: string, action: string) => ({
 				content: [{ type: "text" as const, text: `Error: ${message}` }],
