@@ -121,7 +121,7 @@ export default function (pi: ExtensionAPI) {
 		name: "dock_plan",
 		label: "Plan",
 		description:
-			"Track a multi-step implementation plan. Use it for long tasks with several distinct steps; skip it for short questions or single-step work. Call set with the complete ordered plan to create or reorder it, update to change one item, add to append an item, remove to delete one, and clear when finished. Reuse item ids: mark the current item in_progress and completed items done. Update the plan as work progresses or when the approach changes.",
+			"Track a multi-step implementation plan. Use it for long tasks with several distinct steps; skip it for short questions or single-step work. Call set with the complete ordered plan to create or reorder it, update to change one item, add to append an item, remove to delete one, and clear when finished. Reuse item ids: mark the current item in_progress and completed items done. Update the plan as work progresses or when the approach changes. Continue the same plan through follow-up or steering messages. When the previous work is complete and a new independent task begins, call set to replace the old plan. Do not clear the plan just because a new user message arrived.",
 		promptSnippet: "Track a multi-step plan and its progress",
 		executionMode: "sequential",
 		parameters: PlanParams,

@@ -43,12 +43,26 @@ export function planFromEntries(entries, leafId) {
 		seen.add(current);
 		current = entry.parentId ?? null;
 	}
-	for (const entry of branch) {
+	for (const [index, entry] of branch.entries()) {
 		if (entry.type !== "message") continue;
 		const message = entry.message;
 		if (message?.role !== "toolResult" || message.toolName !== PLAN_TOOL) continue;
 		const plan = normalizePlan(message.details);
-		if (plan) return plan;
+		if (!plan) continue;
+		// A completed plan belongs to the turn that completed it. Once a newer
+		// user message arrives, keep it in Pi's history but leave the right
+		// panel empty until the agent updates or replaces the plan.
+		const complete =
+			plan.items.length > 0 &&
+			plan.items.every((item) => item.status === "done" || item.status === "cancelled");
+		const newerUserMessage = branch
+			.slice(0, index)
+			.some(
+				(candidate) =>
+					candidate.type === "message" && candidate.message?.role === "user",
+			);
+		if (complete && newerUserMessage) return null;
+		return plan;
 	}
 	return null;
 }

@@ -229,10 +229,7 @@ function applyPlan(args) {
 
 async function streamAssistant(parts, { slow = false } = {}) {
 	const delay = slow ? Math.max(SLOW, 28) : SLOW;
-	session.running = true;
-	session.aborted = false;
 	const calls = [];
-	write({ type: "agent_start" });
 	const started = Date.now();
 	write({ type: "message_start", message: assistant([], "pending") });
 	const content = [];
@@ -302,11 +299,7 @@ async function streamAssistant(parts, { slow = false } = {}) {
 	write({ type: "message_end", message: final });
 	pushMessage(final);
 	write({ type: "turn_end", message: final, toolResults: [] });
-	write({ type: "agent_end", messages: [final], willRetry: false });
-	session.running = false;
 	session.contextUnknown = false;
-	write({ type: "agent_settled", aborted: session.aborted });
-	session.aborted = false;
 	return { durationMs: Date.now() - started, calls };
 }
 
@@ -380,6 +373,8 @@ async function planPrompt(message) {
 		const target = items.filter((item) => item.status === "pending").at(-1);
 		if (target) target.status = "cancelled";
 		args = { action: "set", title: current?.title ?? "実装計画", items };
+	} else if (message.includes("continue")) {
+		args = { action: "add", text: "追加の確認", status: "pending" };
 	} else {
 		args = {
 			action: "set",
@@ -399,6 +394,22 @@ async function planPrompt(message) {
 }
 
 async function prompt(message, images = []) {
+	session.running = true;
+	session.aborted = false;
+	write({ type: "agent_start" });
+	try {
+		await promptInner(message, images);
+	} finally {
+		const aborted = session.aborted;
+		session.running = false;
+		session.contextUnknown = false;
+		write({ type: "agent_end", messages: [], willRetry: false });
+		write({ type: "agent_settled", aborted });
+		session.aborted = false;
+	}
+}
+
+async function promptInner(message, images = []) {
 	const userMessage = user(message, images);
 	write({ type: "message_start", message: userMessage });
 	write({ type: "message_end", message: userMessage });
@@ -411,6 +422,45 @@ async function prompt(message, images = []) {
 
 	if (message.includes("plan")) {
 		await planPrompt(message);
+		return;
+	}
+
+	if (message.includes("reason")) {
+		const { calls } = await streamAssistant([
+			{
+				type: "thinking",
+				text: "Let me inspect the architecture first.\nThen I will run one command.",
+			},
+			{ type: "toolCall", name: "bash", args: { command: "echo reason" } },
+		]);
+		for (const call of calls) await runTool(call);
+		await streamAssistant([{ type: "text", text: "理由を確認しました。" }]);
+		return;
+	}
+
+	if (message.includes("slowwork")) {
+		const { calls } = await streamAssistant(
+			[
+				{
+					type: "thinking",
+					text: `${"Let me examine the slow live path carefully. ".repeat(8)}
+Then run one command.`,
+				},
+				{ type: "toolCall", name: "bash", args: { command: "echo slowwork" } },
+			],
+			{ slow: true },
+		);
+		for (const call of calls) await runTool(call);
+		await streamAssistant([{ type: "text", text: "低速の理由を確認しました。" }]);
+		return;
+	}
+
+	if (message.includes("silent")) {
+		const { calls } = await streamAssistant([
+			{ type: "toolCall", name: "bash", args: { command: "echo silent" } },
+		]);
+		for (const call of calls) await runTool(call);
+		await streamAssistant([{ type: "text", text: "静かに完了しました。" }]);
 		return;
 	}
 

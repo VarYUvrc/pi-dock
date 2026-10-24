@@ -1,10 +1,9 @@
-import { open, readdir, stat } from "node:fs/promises";
+import { lstat, open, readdir, realpath, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, extname, join } from "node:path";
 
 const HEAD_BYTES = 32 * 1024;
 const TAIL_BYTES = 8 * 1024;
-const MAX_SESSIONS = 60;
 
 export function agentDir(env = process.env) {
 	return env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
@@ -72,32 +71,41 @@ function summarize(records, info) {
 	}
 }
 
-/** Read-only session listing. Never creates directories or files. */
-export async function listSessions({ cwd, currentId, env = process.env }) {
+/**
+ * List regular .jsonl files directly under the current project's Pi session
+ * directory. Symlinks are ignored so a delete request can never escape it.
+ */
+async function sessionFiles(cwd, env) {
 	const dir = sessionDirFor(cwd, env);
-	let files;
+	let names;
 	try {
-		files = await readdir(dir);
+		names = await readdir(dir);
 	} catch {
-		return [];
+		return { dir, files: [] };
 	}
 
-	const candidates = [];
-	for (const name of files) {
+	const files = [];
+	for (const name of names) {
 		if (!name.endsWith(".jsonl")) continue;
 		const path = join(dir, name);
 		try {
-			const stats = await stat(path);
-			if (!stats.isFile()) continue;
-			candidates.push({ path, size: stats.size, modified: stats.mtimeMs });
+			const stats = await lstat(path);
+			if (!stats.isFile() || stats.isSymbolicLink()) continue;
+			files.push({ path, size: stats.size, modified: stats.mtimeMs });
 		} catch {
 			/* ignore vanished file */
 		}
 	}
-	candidates.sort((a, b) => b.modified - a.modified);
+	files.sort((a, b) => b.modified - a.modified);
+	return { dir, files };
+}
+
+/** Read-only session listing. Never creates directories or files. */
+export async function listSessions({ cwd, currentId, env = process.env }) {
+	const { files } = await sessionFiles(cwd, env);
 
 	const sessions = await Promise.all(
-		candidates.slice(0, MAX_SESSIONS).map(async (candidate) => {
+		files.map(async (candidate) => {
 			const info = { id: "", cwd: "", created: "", name: "", preview: "" };
 			try {
 				const head = await readChunk(
@@ -131,4 +139,71 @@ export async function listSessions({ cwd, currentId, env = process.env }) {
 	);
 
 	return sessions.filter(Boolean);
+}
+
+async function readSessionId(path, size) {
+	try {
+		const head = await readChunk(path, 0, Math.min(size, HEAD_BYTES));
+		for (const record of parseLines(head)) {
+			if (record.type === "session" && typeof record.id === "string" && record.id) {
+				return record.id;
+			}
+		}
+	} catch {
+		/* unreadable file */
+	}
+	return "";
+}
+
+/**
+ * Resolve the current project's session files by ID. IDs come from the
+ * browser; paths never do. Re-enumerating here also keeps "all" correct even
+ * when the UI only displayed a subset of the history.
+ */
+export async function resolveSessionTargets({
+	cwd,
+	ids = null,
+	all = false,
+	env = process.env,
+}) {
+	const { files } = await sessionFiles(cwd, env);
+	const wanted = ids ? new Set(ids.filter((id) => typeof id === "string" && id)) : null;
+	const targets = [];
+	const found = new Set();
+
+	for (const file of files) {
+		const id = await readSessionId(file.path, file.size);
+		if (!id) continue;
+		if (all || (wanted && wanted.has(id))) {
+			targets.push({
+				id,
+				path: file.path,
+				size: file.size,
+				modified: new Date(file.modified).toISOString(),
+			});
+			found.add(id);
+		}
+	}
+
+	return {
+		targets,
+		missing: wanted ? [...wanted].filter((id) => !found.has(id)) : [],
+	};
+}
+
+/** Delete one .jsonl file, but only if it is directly inside this cwd's dir. */
+export async function deleteSessionFile({ cwd, path, env = process.env }) {
+	if (typeof path !== "string" || !path) throw new Error("パスが不正です");
+	const dir = sessionDirFor(cwd, env);
+	const realDir = await realpath(dir);
+	const info = await lstat(path);
+	if (!info.isFile() || info.isSymbolicLink()) {
+		throw new Error("通常のセッションファイルではありません");
+	}
+	const realPath = await realpath(path);
+	const key = (value) => (process.platform === "win32" ? value.toLowerCase() : value);
+	if (key(dirname(realPath)) !== key(realDir) || extname(realPath) !== ".jsonl") {
+		throw new Error("セッションディレクトリ外のファイルは削除できません");
+	}
+	await unlink(realPath);
 }

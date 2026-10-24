@@ -21,7 +21,6 @@ const dom = {
 	sendMode: $("sendMode"),
 	planPanel: $("planPanel"),
 	planTitle: $("planTitle"),
-	planCurrent: $("planCurrent"),
 	planItems: $("planItems"),
 	queueBadge: $("queueBadge"),
 	scroller: $("scroller"),
@@ -39,6 +38,10 @@ const dom = {
 	contextButton: $("contextButton"),
 	ringFg: $("ringFg"),
 	ringLimit: $("ringLimit"),
+	planToggle: $("planToggle"),
+	planBackdrop: $("planBackdrop"),
+	planClose: $("planClose"),
+	planEmpty: $("planEmpty"),
 	newChatButton: $("newChatButton"),
 	historyButton: $("historyButton"),
 	settingsButton: $("settingsButton"),
@@ -49,6 +52,12 @@ const dom = {
 	contextMenu: $("contextMenu"),
 	historyPanel: $("historyPanel"),
 	historyClose: $("historyClose"),
+	historySelect: $("historySelect"),
+	historyActions: $("historyActions"),
+	historySelectAll: $("historySelectAll"),
+	historyCount: $("historyCount"),
+	historyDelete: $("historyDelete"),
+	historyCancel: $("historyCancel"),
 	drawerBackdrop: $("drawerBackdrop"),
 	sessionList: $("sessionList"),
 	dialogLayer: $("dialogLayer"),
@@ -67,6 +76,7 @@ const state = {
 	piDown: "",
 	authError: "",
 	running: false,
+	runStartedAt: null,
 	compacting: false,
 	aborting: false,
 	retry: null,
@@ -93,12 +103,14 @@ const state = {
 	statuses: {},
 	widgets: {},
 	dialogs: [],
+	localDialog: null,
 	sessions: [],
+	sessionTotal: 0,
+	historySelection: null,
 	menu: null,
 	slash: null,
 	commandMenu: null,
 	sendMode: "steer",
-	planSeen: false,
 };
 
 const openKeys = new Set();
@@ -113,6 +125,7 @@ let statsPoll = 0;
 let statsInFlight = false;
 let statsQueued = false;
 let statsGeneration = 0;
+let elapsedTimer = 0;
 let composing = false;
 let compositionEndedAt = Number.NEGATIVE_INFINITY;
 
@@ -207,7 +220,6 @@ function connect() {
 async function refreshSnapshot() {
 	const snapshot = await api({ type: "dock:snapshot" });
 	statsGeneration += 1;
-	const sessionChanged = state.sessionId !== (snapshot.state?.sessionId ?? "");
 	state.runtimeId = snapshot.runtime ?? "";
 	state.cwd = snapshot.cwd ?? "";
 	state.sessionState = snapshot.state ?? null;
@@ -216,6 +228,12 @@ async function refreshSnapshot() {
 	state.sessionName = snapshot.state?.sessionName ?? "";
 	state.sessionId = snapshot.state?.sessionId ?? "";
 	state.running = Boolean(snapshot.state?.isStreaming);
+	state.runStartedAt =
+		Number.isFinite(snapshot.runStartedAt)
+			? snapshot.runStartedAt
+			: state.running
+				? Date.now()
+				: null;
 	state.compacting = Boolean(snapshot.state?.isCompacting);
 	state.messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
 	state.stats = snapshot.stats ?? null;
@@ -225,7 +243,6 @@ async function refreshSnapshot() {
 	state.levels = snapshot.levels?.length ? snapshot.levels : ["off"];
 	state.commands = snapshot.commands ?? [];
 	state.plan = snapshot.plan ?? null;
-	if (sessionChanged) state.planSeen = false;
 	state.attachments = [];
 	renderAttachments();
 	state.live = snapshot.live?.blocks?.length
@@ -283,11 +300,13 @@ function handleRecord(record) {
 		case "dock:exit":
 			state.piDown = record.reason ?? "Pi との接続が切れました";
 			state.running = false;
+			state.runStartedAt = null;
 			state.compacting = false;
 			state.contextUsage = null;
 			state.live = null;
 			state.aborting = false;
 			stopStatsPolling();
+			stopElapsedTimer();
 			renderChrome();
 			renderLive();
 			renderRunStatus();
@@ -298,18 +317,25 @@ function handleRecord(record) {
 			return;
 		case "agent_start":
 			state.running = true;
+			if (!state.runStartedAt) {
+				state.runStartedAt = Number.isFinite(record.runStartedAt)
+					? record.runStartedAt
+					: Date.now();
+			}
 			state.aborting = false;
 			state.retry = null;
 			state.sendMode = "steer";
 			state.live = { blocks: [], tools: state.tools };
 			startStatsPolling();
 			renderChrome();
+			renderRunStatus();
 			scheduleLive();
 			return;
 		case "agent_end":
 			return;
 		case "agent_settled":
 			state.running = false;
+			state.runStartedAt = null;
 			state.aborting = false;
 			state.retry = null;
 			state.sendMode = "steer";
@@ -317,7 +343,9 @@ function handleRecord(record) {
 			state.tools = {};
 			state.toolRev = {};
 			stopStatsPolling();
+			stopElapsedTimer();
 			renderChrome();
+			renderRunStatus();
 			scheduleLive();
 			renderMessages();
 			scheduleStats();
@@ -483,6 +511,7 @@ function textOfContent(content) {
 }
 
 function onUserMessage(message, { start = false } = {}) {
+	hideCompletedPlanForNewTurn();
 	for (let index = state.messages.length - 1; index >= 0; index -= 1) {
 		const item = state.messages[index];
 		if (item.role === "user" && item._optimistic) {
@@ -611,7 +640,45 @@ function respondDialog(request, response) {
 	});
 }
 
+function closeLocalDialog() {
+	state.localDialog = null;
+	renderDialog();
+}
+
+function showConfirm({ title, message, confirmLabel = "OK", danger = false, onConfirm }) {
+	state.localDialog = { title, message, confirmLabel, danger, onConfirm };
+	renderDialog();
+}
+
+function renderLocalDialog(dialog) {
+	dom.dialogLayer.hidden = false;
+	const parts = [];
+	const h2 = document.createElement("h2");
+	h2.textContent = dialog.title || "確認";
+	parts.push(h2);
+	const p = document.createElement("p");
+	p.textContent = dialog.message ?? "";
+	parts.push(p);
+	const actions = document.createElement("div");
+	actions.className = "dialog-actions";
+	actions.append(
+		button("キャンセル", "btn", closeLocalDialog),
+		button(dialog.confirmLabel, `btn ${dialog.danger ? "danger" : "primary"}`, async () => {
+			const action = dialog.onConfirm;
+			closeLocalDialog();
+			await action?.();
+		}, "local-dialog-confirm"),
+	);
+	parts.push(actions);
+	dom.dialog.replaceChildren(...parts);
+	dom.dialog.querySelector(".btn.primary, .btn.danger, .btn")?.focus();
+}
+
 function renderDialog() {
+	if (state.localDialog) {
+		renderLocalDialog(state.localDialog);
+		return;
+	}
 	const request = state.dialogs[0];
 	if (!request) {
 		dom.dialogLayer.hidden = true;
@@ -751,6 +818,7 @@ async function send() {
 		timestamp: Date.now(),
 		_optimistic: true,
 	});
+	hideCompletedPlanForNewTurn();
 	dom.input.value = "";
 	clearAttachments();
 	autosize();
@@ -1167,6 +1235,11 @@ document.addEventListener("pointerdown", (event) => {
 
 document.addEventListener("keydown", (event) => {
 	if (event.key !== "Escape") return;
+	if (state.localDialog) {
+		event.preventDefault();
+		closeLocalDialog();
+		return;
+	}
 	if (state.dialogs.length) {
 		event.preventDefault();
 		respondDialog(state.dialogs[0], { cancelled: true });
@@ -1187,6 +1260,11 @@ document.addEventListener("keydown", (event) => {
 		closeHistory();
 		return;
 	}
+	if (document.querySelector(".app")?.classList.contains("plan-open")) {
+		event.preventDefault();
+		closePlanDrawer();
+		return;
+	}
 	if (state.running) {
 		event.preventDefault();
 		abort();
@@ -1196,6 +1274,7 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("resize", () => {
 	if (state.menu) closeMenus();
 	if (state.commandMenu) closeCommandMenu();
+	if (window.innerWidth > 1040) closePlanDrawer();
 });
 
 /* -------------------------------------------------------------- slash menu */
@@ -1754,11 +1833,11 @@ function renderContextMenu() {
 		? Math.round(compaction.thresholdTokens)
 		: null;
 	const rows = [
-		["コンテキスト", percent === null ? "不明" : `${percent}%`],
+		["コンテキスト", percent === null ? "—" : `${percent}%`],
 		[
 			"トークン",
 			tokens === null
-				? "不明"
+				? "—"
 				: `${tokens.toLocaleString()}${windowSize ? ` / ${windowSize.toLocaleString()}` : ""}`,
 		],
 		["メッセージ", String(state.stats?.totalMessages ?? state.messages.length)],
@@ -1791,14 +1870,14 @@ function renderContextMenu() {
 			<button type="button" data-compaction-percent="50" aria-pressed="${pressed(50)}" data-testid="compaction-50">50%</button>
 			<button type="button" data-compaction-clear data-testid="compaction-default">既定</button>
 		</div>
-		<div class="hint">${escapeHtml(
+		${
 			thresholdTokens === null
-				? "このモデルのコンテキスト長が不明です"
-				: `約 ${thresholdTokens.toLocaleString()} トークンで自動圧縮`,
-		)}</div>` +
-		`<div class="menu-foot"><button type="button" class="menu-item" data-action="compact" data-testid="compact-button"${
-			state.running ? " disabled" : ""
-		}><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg><span class="label">コンテキストを圧縮</span></button></div>`;
+				? ""
+				: `<div class="hint">約 ${escapeHtml(thresholdTokens.toLocaleString())} トークンで自動圧縮</div>`
+		}` +
+		(state.running || state.compacting
+			? ""
+			: '<div class="menu-foot"><button type="button" class="menu-item" data-action="compact" data-testid="compact-button"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg><span class="label">コンテキストを圧縮</span></button></div>');
 }
 
 function numberOrNull(value) {
@@ -1895,46 +1974,137 @@ dom.contextMenu.addEventListener("click", async (event) => {
 
 /* ------------------------------------------------------------------ history */
 
+function openPlanDrawer() {
+	closeHistory();
+	closeMenus();
+	closeSlash();
+	closeCommandMenu();
+	document.querySelector(".app")?.classList.add("plan-open");
+	dom.planBackdrop.hidden = false;
+	dom.planToggle.setAttribute("aria-expanded", "true");
+	dom.planClose.focus();
+}
+
+function closePlanDrawer() {
+	document.querySelector(".app")?.classList.remove("plan-open");
+	dom.planBackdrop.hidden = true;
+	dom.planToggle.setAttribute("aria-expanded", "false");
+}
+
+async function loadSessions() {
+	const data = await api({ type: "dock:sessions" });
+	state.sessions = Array.isArray(data) ? data : data?.sessions ?? [];
+	state.sessionTotal = Array.isArray(data)
+		? state.sessions.length
+		: Number.isFinite(data?.total)
+			? data.total
+			: state.sessions.length;
+	if (state.historySelection instanceof Set) {
+		const existing = new Set(state.sessions.map((session) => session.id));
+		state.historySelection = new Set(
+			[...state.historySelection].filter((id) => existing.has(id)),
+		);
+	}
+	renderSessionList();
+}
+
+function eligibleSessions() {
+	return state.sessions.filter(
+		(session) => session.id && !session.current && !session.running,
+	);
+}
+
+function cancelHistorySelection() {
+	state.historySelection = null;
+	updateHistoryActions();
+}
+
+function updateHistoryActions() {
+	const selecting = state.historySelection instanceof Set;
+	dom.historySelect.hidden = selecting;
+	dom.historyActions.hidden = !selecting;
+	if (!selecting) return;
+	const count = state.historySelection.size;
+	dom.historyCount.textContent = `${count} 件`;
+	dom.historyDelete.disabled = count === 0;
+	const eligible = eligibleSessions();
+	const allSelected =
+		eligible.length > 0 && eligible.every((session) => state.historySelection.has(session.id));
+	dom.historySelectAll.textContent = allSelected ? "選択解除" : "全選択";
+}
+
 function openHistory() {
 	closeMenus();
 	closeSlash();
 	closeCommandMenu();
+	closePlanDrawer();
 	dom.historyPanel.hidden = false;
 	dom.drawerBackdrop.hidden = false;
 	dom.historyButton.setAttribute("aria-expanded", "true");
 	dom.sessionList.innerHTML = '<div class="session-empty">…</div>';
-	api({ type: "dock:sessions" })
-		.then((sessions) => {
-			state.sessions = sessions ?? [];
-			renderSessionList();
-		})
-		.catch((error) => {
-			dom.sessionList.innerHTML = `<div class="session-empty">${escapeHtml(error.message)}</div>`;
-		});
+	cancelHistorySelection();
+	loadSessions().catch((error) => {
+		dom.sessionList.innerHTML = `<div class="session-empty">${escapeHtml(error.message)}</div>`;
+	});
 }
 
 function closeHistory() {
 	dom.historyPanel.hidden = true;
 	dom.drawerBackdrop.hidden = true;
 	dom.historyButton.removeAttribute("aria-expanded");
+	cancelHistorySelection();
 }
 
 function renderSessionList() {
+	dom.sessionList.dataset.total = String(state.sessionTotal || state.sessions.length);
 	if (!state.sessions.length) {
 		dom.sessionList.innerHTML = '<div class="session-empty">履歴はありません</div>';
+		updateHistoryActions();
 		return;
 	}
+	const selecting = state.historySelection instanceof Set;
 	const items = state.sessions.map((session, index) => {
 		const name = session.name || session.preview || "無題の会話";
 		const preview = session.name ? session.preview : "";
-		return `<button type="button" class="session-item${session.current ? " current" : ""}" data-index="${index}" data-testid="session-item">
-			<span class="s-top"><span class="s-title">${escapeHtml(name)}</span>${
-				session.running ? '<span class="s-run" title="実行中" aria-label="実行中"></span>' : ""
-			}<span class="s-time">${escapeHtml(relativeTime(session.modified))}</span></span>
-			${preview ? `<span class="s-preview">${escapeHtml(preview)}</span>` : ""}
-		</button>`;
+		const selectable =
+			Boolean(session.id) &&
+			!session.current &&
+			!session.running &&
+			(Boolean(session.path) || !session.live);
+		const selected = selecting && selectable && state.historySelection.has(session.id);
+		const check =
+			selecting && selectable
+				? `<span class="session-check${selected ? " checked" : ""}" role="checkbox" aria-checked="${selected}" aria-hidden="true"></span>`
+				: "";
+		const trash =
+			!selecting && selectable
+				? `<button type="button" class="session-trash" data-delete-index="${index}" title="削除" aria-label="削除" data-testid="session-delete">
+						<svg class="icon"><use href="#i-trash"/></svg>
+					</button>`
+				: "";
+		return `<div class="session-item${session.current ? " current" : ""}${
+			selecting ? " selecting" : ""
+		}${selected ? " selected" : ""}" data-index="${index}" data-testid="session-item"${
+			selecting
+				? selectable
+					? ` role="checkbox" aria-checked="${selected}" tabindex="0"`
+					: ' aria-disabled="true"'
+				: ' role="button" tabindex="0"'
+		}>
+			${check}
+			<span class="session-main">
+				<span class="s-top"><span class="s-title">${escapeHtml(name)}</span>${
+					session.running
+						? '<span class="s-run" title="実行中" aria-label="実行中"></span>'
+						: ""
+				}<span class="s-time">${escapeHtml(relativeTime(session.modified))}</span></span>
+				${preview ? `<span class="s-preview">${escapeHtml(preview)}</span>` : ""}
+			</span>
+			${trash}
+		</div>`;
 	});
 	dom.sessionList.innerHTML = items.join("");
+	updateHistoryActions();
 }
 
 function relativeTime(iso) {
@@ -1950,17 +2120,132 @@ function relativeTime(iso) {
 	return `${month}/${day}`;
 }
 
-dom.historyButton.addEventListener("click", openHistory);
-dom.historyClose.addEventListener("click", closeHistory);
-dom.drawerBackdrop.addEventListener("click", closeHistory);
-dom.sessionList.addEventListener("click", (event) => {
-	const item = event.target.closest("[data-index]");
-	if (!item) return;
-	const session = state.sessions[Number(item.dataset.index)];
+function confirmDeleteSessions({ ids, all = false, count, name }) {
+	const message = all
+		? `このプロジェクトの履歴 ${count} 件を完全に削除します。元に戻せません。`
+		: count === 1
+			? `「${name || "無題の会話"}」を完全に削除します。元に戻せません。`
+			: `${count} 件の履歴を完全に削除します。元に戻せません。`;
+	showConfirm({
+		title: "履歴を削除",
+		message,
+		confirmLabel: "削除",
+		danger: true,
+		onConfirm: async () => {
+			try {
+				const result = await api({
+					type: "dock:delete_sessions",
+					...(all ? { all: true } : { ids }),
+				});
+				const deleted = Number(result?.deleted) || 0;
+				const failed = Array.isArray(result?.failed) ? result.failed : [];
+				if (failed.length) {
+					toast(`${deleted} 件削除、${failed.length} 件失敗`, "warning");
+				} else {
+					toast(`${deleted} 件の履歴を削除しました`);
+				}
+				cancelHistorySelection();
+				await loadSessions();
+			} catch (error) {
+				toast(error.message, "error");
+			}
+		},
+	});
+}
+
+function deleteSessionAt(index) {
+	const session = state.sessions[index];
+	if (!session || !session.id || session.current || session.running) return;
+	confirmDeleteSessions({
+		ids: [session.id],
+		count: 1,
+		name: session.name || session.preview || "無題の会話",
+	});
+}
+
+function deleteHistorySelection() {
+	const selection = state.historySelection;
+	if (!(selection instanceof Set) || selection.size === 0) return;
+	const eligible = eligibleSessions();
+	const all =
+		eligible.length === selection.size &&
+		eligible.every((session) => selection.has(session.id));
+	confirmDeleteSessions({
+		ids: [...selection],
+		all,
+		count: selection.size,
+	});
+}
+
+function toggleHistorySelection(index) {
+	const session = state.sessions[index];
+	if (!session || !session.id || session.current || session.running) return;
+	const selection = state.historySelection;
+	if (!(selection instanceof Set)) return;
+	if (selection.has(session.id)) selection.delete(session.id);
+	else selection.add(session.id);
+	renderSessionList();
+}
+
+function activateHistoryItem(index) {
+	const session = state.sessions[index];
 	if (!session || session.current) return;
 	if (session.runtime) activateSession(session.runtime);
 	else switchSession(session.path);
+}
+
+dom.historyButton.addEventListener("click", openHistory);
+dom.historyClose.addEventListener("click", closeHistory);
+dom.historySelect.addEventListener("click", () => {
+	state.historySelection = new Set();
+	renderSessionList();
 });
+dom.historyCancel.addEventListener("click", () => {
+	cancelHistorySelection();
+	renderSessionList();
+});
+dom.historySelectAll.addEventListener("click", () => {
+	const selection = state.historySelection;
+	if (!(selection instanceof Set)) return;
+	const eligible = eligibleSessions();
+	const allSelected =
+		eligible.length > 0 && eligible.every((session) => selection.has(session.id));
+	state.historySelection = allSelected
+		? new Set()
+		: new Set(eligible.map((session) => session.id));
+	renderSessionList();
+});
+dom.historyDelete.addEventListener("click", deleteHistorySelection);
+dom.drawerBackdrop.addEventListener("click", closeHistory);
+dom.sessionList.addEventListener("click", (event) => {
+	const trash = event.target.closest("[data-delete-index]");
+	if (trash) {
+		deleteSessionAt(Number(trash.dataset.deleteIndex));
+		return;
+	}
+	const item = event.target.closest("[data-index]");
+	if (!item) return;
+	const index = Number(item.dataset.index);
+	if (state.historySelection instanceof Set) toggleHistorySelection(index);
+	else activateHistoryItem(index);
+});
+dom.sessionList.addEventListener("keydown", (event) => {
+	if (event.key !== "Enter" && event.key !== " ") return;
+	const item = event.target.closest("[data-index]");
+	if (!item) return;
+	event.preventDefault();
+	const index = Number(item.dataset.index);
+	if (state.historySelection instanceof Set) toggleHistorySelection(index);
+	else activateHistoryItem(index);
+});
+
+dom.planToggle.addEventListener("click", () => {
+	const app = document.querySelector(".app");
+	if (app?.classList.contains("plan-open")) closePlanDrawer();
+	else openPlanDrawer();
+});
+dom.planClose.addEventListener("click", closePlanDrawer);
+dom.planBackdrop.addEventListener("click", closePlanDrawer);
 
 dom.newChatButton.addEventListener("click", newChat);
 dom.jumpButton.addEventListener("click", () => scrollToBottom(true));
@@ -1998,23 +2283,32 @@ function collectToolResults(messages) {
 	return { results, calls };
 }
 
+function planIsComplete(plan) {
+	const items = Array.isArray(plan?.items) ? plan.items : [];
+	return (
+		items.length > 0 &&
+		items.every((item) => item.status === "done" || item.status === "cancelled")
+	);
+}
+
+function hideCompletedPlanForNewTurn() {
+	if (!planIsComplete(state.plan)) return;
+	state.plan = null;
+	renderPlan();
+}
+
 function renderPlan() {
 	const plan = state.plan;
 	const items = Array.isArray(plan?.items) ? plan.items : [];
-	dom.planPanel.hidden = items.length === 0;
-	if (!items.length) {
-		state.planSeen = false;
-		dom.planCurrent.textContent = "";
+	const hasPlan = items.length > 0;
+	dom.planPanel.classList.toggle("has-plan", hasPlan);
+	dom.planEmpty.hidden = hasPlan;
+	dom.planItems.hidden = !hasPlan;
+	dom.planTitle.textContent = hasPlan ? plan.title || "計画" : "計画";
+	if (!hasPlan) {
 		dom.planItems.replaceChildren();
 		return;
 	}
-	if (!state.planSeen) {
-		state.planSeen = true;
-		dom.planPanel.open = true;
-	}
-	dom.planTitle.textContent = plan.title || "計画";
-	const current = items.find((item) => item.status === "in_progress");
-	dom.planCurrent.textContent = current?.text ?? "";
 	const nodes = items.map((item) => {
 		const entry = document.createElement("li");
 		entry.className = `plan-item ${item.status}`;
@@ -2255,30 +2549,40 @@ function workStatus(items) {
 	return "done";
 }
 
+function meaningfulLine(text) {
+	if (typeof text !== "string") return "";
+	for (const raw of text.split(/\r?\n/)) {
+		let line = raw.trim();
+		if (!line) continue;
+		line = line
+			.replace(/^#{1,6}\s*/, "")
+			.replace(/^(?:[-*+]\s+|\d+[.)]\s+|>\s*)/, "")
+			.trim();
+		if (!line || /^```/.test(line)) continue;
+		if (!/[\p{L}\p{N}]/u.test(line)) continue;
+		return line;
+	}
+	return "";
+}
+
+function workHeading(items, status) {
+	for (const item of items) {
+		if (item.kind !== "thinking") continue;
+		const line = meaningfulLine(item.text);
+		if (line) return line;
+	}
+	return status === "error" ? "エラー" : "作業";
+}
+
 function workMarkup(items, key, prefix) {
 	const status = workStatus(items);
-	const onlyThinking = items.every((item) => item.kind === "thinking");
-	const label =
-		status === "error"
-			? "エラー"
-			: onlyThinking
-				? status === "running"
-					? "思考中"
-					: "思考"
-				: status === "running"
-					? "作業中"
-					: "作業";
+	const label = workHeading(items, status);
 	const statuses = items.map((item) => item.status);
-	const shown = statuses.slice(0, 8);
-	if (statuses.length > 8 && status === "error" && !shown.includes("error")) shown[7] = "error";
+	const shown = statuses.slice(-12);
+	if (statuses.length > 12 && status === "error" && !shown.includes("error")) shown[0] = "error";
 	const rail = shown
 		.map((value) => `<i class="work-dot ${value}"></i>`)
 		.join("");
-	const duration = items.reduce(
-		(sum, item) => sum + (Number.isFinite(item.tool?.durationMs) ? item.tool.durationMs : 0),
-		0,
-	);
-	const meta = status === "running" || !duration ? "" : formatDuration(duration);
 	const body = items
 		.map((item) => {
 			if (item.kind === "thinking") {
@@ -2296,10 +2600,8 @@ function workMarkup(items, key, prefix) {
 		openKeys.has(key) ? " open" : ""
 	}>
 		<summary>
-			<span class="work-label">${label}</span>
+			<span class="work-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
 			<span class="work-rail" aria-hidden="true">${rail}</span>
-			<span class="work-count" title="内部処理 ${items.length} 件">${items.length}</span>
-			${meta ? `<span class="work-meta">${escapeHtml(meta)}</span>` : ""}
 			${status === "error" ? '<svg class="icon work-alert" aria-hidden="true"><use href="#i-alert"/></svg>' : ""}
 			<svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg>
 		</summary>
@@ -2398,6 +2700,45 @@ function renderToolResult(message, index) {
 	return renderToolCard(tool, `m${index}`, "tool-result");
 }
 
+function reuseLiveWork(oldMount, node) {
+	const previous = new Map(
+		[...oldMount.querySelectorAll("details.work[data-key]")].map((element) => [
+			element.dataset.key,
+			element,
+		]),
+	);
+	for (const fresh of node.querySelectorAll("details.work[data-key]")) {
+		const old = previous.get(fresh.dataset.key);
+		if (!old) continue;
+		const oldSummary = old.querySelector("summary");
+		const freshSummary = fresh.querySelector("summary");
+		const oldLabel = oldSummary?.querySelector(".work-label");
+		const freshLabel = freshSummary?.querySelector(".work-label");
+		if (oldLabel && freshLabel) {
+			if (oldLabel.textContent !== freshLabel.textContent) {
+				oldLabel.textContent = freshLabel.textContent;
+			}
+			oldLabel.title = freshLabel.title;
+		}
+		const oldRail = oldSummary?.querySelector(".work-rail");
+		const freshRail = freshSummary?.querySelector(".work-rail");
+		if (oldRail && freshRail) oldRail.innerHTML = freshRail.innerHTML;
+		const oldAlert = oldSummary?.querySelector(".work-alert");
+		const freshAlert = freshSummary?.querySelector(".work-alert");
+		if (freshAlert && !oldAlert) {
+			oldSummary.insertBefore(freshAlert, oldSummary.querySelector(".chev"));
+		} else if (!freshAlert && oldAlert) {
+			oldAlert.remove();
+		}
+		old.className = fresh.className;
+		old.dataset.status = fresh.dataset.status;
+		const oldBody = old.querySelector(".work-body");
+		const freshBody = fresh.querySelector(".work-body");
+		if (oldBody && freshBody) oldBody.replaceWith(freshBody);
+		fresh.replaceWith(old);
+	}
+}
+
 function renderLive() {
 	const blocks = state.live?.blocks?.filter(Boolean) ?? [];
 	if (!blocks.length) {
@@ -2410,15 +2751,54 @@ function renderLive() {
 	node.className = "assistant live";
 	node.dataset.testid = "message-live";
 	node.innerHTML = renderBlocks(blocks, "live", ctx, { live: true });
+	reuseLiveWork(dom.liveMount, node);
 	dom.liveMount.replaceChildren(node);
 	dom.empty.hidden = true;
 	if (stickToBottom) scrollToBottom();
+}
+
+function pad2(value) {
+	return String(value).padStart(2, "0");
+}
+
+function formatElapsed(ms) {
+	const total = Math.max(0, Math.floor(ms / 1000));
+	const hours = Math.floor(total / 3600);
+	const minutes = Math.floor((total % 3600) / 60);
+	const seconds = total % 60;
+	return `${hours}h${pad2(minutes)}m${pad2(seconds)}s`;
+}
+
+function updateElapsed() {
+	const element = dom.runStatus.querySelector("[data-testid='run-elapsed']");
+	if (!element) return;
+	if (!Number.isFinite(state.runStartedAt)) {
+		element.textContent = "";
+		return;
+	}
+	element.textContent = formatElapsed(Date.now() - state.runStartedAt);
+}
+
+function startElapsedTimer() {
+	if (elapsedTimer) {
+		updateElapsed();
+		return;
+	}
+	updateElapsed();
+	elapsedTimer = setInterval(updateElapsed, 1000);
+}
+
+function stopElapsedTimer() {
+	if (!elapsedTimer) return;
+	clearInterval(elapsedTimer);
+	elapsedTimer = 0;
 }
 
 function renderRunStatus() {
 	const active = state.running || state.aborting || state.compacting || Boolean(state.retry);
 	dom.runStatus.hidden = !active;
 	if (!active) {
+		stopElapsedTimer();
 		dom.runStatus.replaceChildren();
 		return;
 	}
@@ -2429,7 +2809,13 @@ function renderRunStatus() {
 			: "";
 	dom.runStatus.innerHTML = `<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>${
 		text ? `<span>${escapeHtml(text)}</span>` : ""
+	}${
+		Number.isFinite(state.runStartedAt)
+			? '<span class="run-elapsed" data-testid="run-elapsed"></span>'
+			: ""
 	}`;
+	if (Number.isFinite(state.runStartedAt)) startElapsedTimer();
+	else stopElapsedTimer();
 }
 
 function renderChrome() {
@@ -2457,6 +2843,10 @@ function renderChrome() {
 		percent === null ? String(circumference) : String(circumference * (1 - percent / 100)),
 	);
 	dom.contextButton.classList.toggle("unknown", percent === null);
+	dom.contextButton.classList.toggle(
+		"running",
+		state.running || state.aborting || state.compacting || Boolean(state.retry),
+	);
 	if (limit === null) {
 		dom.ringLimit.setAttribute("visibility", "hidden");
 	} else {
@@ -2476,7 +2866,7 @@ function renderChrome() {
 			`コンテキスト ${Math.round(percent)}% (${(usage.tokens ?? 0).toLocaleString()} / ${(usage.contextWindow ?? 0).toLocaleString()})`,
 		);
 	} else {
-		title.push("コンテキスト 不明");
+		title.push("コンテキスト");
 	}
 	if (limit !== null) {
 		title.push(
@@ -2653,7 +3043,7 @@ async function boot() {
 	autosize();
 
 	document.addEventListener("keydown", (event) => {
-		if (event.key !== "/" || state.dialogs.length) return;
+		if (event.key !== "/" || state.dialogs.length || state.localDialog) return;
 		const target = event.target;
 		const typing =
 			target instanceof HTMLInputElement ||

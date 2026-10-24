@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { join } from "node:path";
-import { setupWorkspace, startDock, stopDock } from "./harness.js";
+import { sessionFile, setupWorkspace, startDock, stopDock } from "./harness.js";
 
 const PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -34,6 +34,24 @@ async function send(text) {
 
 async function expectDone() {
 	await expect(page.locator("#stopButton")).toBeHidden({ timeout: 15_000 });
+}
+
+function elapsedSeconds(text) {
+	const match = /^(\d+)h(\d{2})m(\d{2})s$/.exec(text ?? "");
+	if (!match) return NaN;
+	return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+
+async function rpc(command) {
+	const response = await page.request.post(`http://127.0.0.1:${dock.port}/api/rpc`, {
+		data: command,
+		headers: {
+			"content-type": "application/json",
+			origin: `http://127.0.0.1:${dock.port}`,
+			"x-pi-dock-token": dock.token,
+		},
+	});
+	return response.json();
 }
 
 test("loads the shell and enforces the token", async () => {
@@ -81,6 +99,9 @@ test("streams a reply with thinking, tools, markdown and copy", async () => {
 	await expect(groups).toHaveCount(2);
 	const reasoning = groups.first();
 	await expect(reasoning).toHaveAttribute("data-status", "done");
+	await expect(reasoning.locator(".work-label")).toHaveText(
+		"ユーザーの依頼を確認して、必要なツールを選びます。",
+	);
 	expect(await reasoning.evaluate((node) => node.open)).toBe(false);
 	await reasoning.locator("summary").first().click();
 	await expect(reasoning).toContainText("必要なツール");
@@ -89,7 +110,8 @@ test("streams a reply with thinking, tools, markdown and copy", async () => {
 	await expect(work).toHaveAttribute("data-status", "done");
 	expect(await work.evaluate((node) => node.open)).toBe(false);
 	await expect(work.locator(".work-dot.done")).toHaveCount(1);
-	await expect(work.locator(".work-count")).toHaveText("1");
+	await expect(work.locator(".work-label")).toHaveText("作業");
+	await expect(work.locator(".work-count, .work-meta")).toHaveCount(0);
 	await work.locator("summary").first().click();
 
 	// Nested tool cards stay individually expandable with arguments and output.
@@ -124,8 +146,8 @@ test("groups multiple tools into a stable work rail and keeps failures visible",
 	await expect(groups).toHaveCount(2);
 	const work = groups.last();
 	await expect(work).toHaveAttribute("data-status", "done");
-	await expect(work.locator(".work-count")).toHaveText("3");
 	await expect(work.locator(".work-dot.done")).toHaveCount(3);
+	await expect(work.locator(".work-label")).toHaveText("作業");
 	const railWidth = await work
 		.locator(".work-rail")
 		.evaluate((node) => node.getBoundingClientRect().width);
@@ -149,13 +171,64 @@ test("groups multiple tools into a stable work rail and keeps failures visible",
 	await expect(failed.getByTestId("tool").first()).toContainText("exit 1");
 });
 
+test("uses reasoning as the work heading and falls back quietly", async () => {
+	await send("reason");
+	await expect(page.getByTestId("message-assistant").last()).toContainText("理由を確認しました。", {
+		timeout: 10_000,
+	});
+	await expectDone();
+
+	const reasoned = page.getByTestId("work-group").last();
+	await expect(reasoned.locator(".work-label")).toHaveText(
+		"Let me inspect the architecture first.",
+	);
+	await expect(reasoned.locator(".work-dot.done")).toHaveCount(2);
+	await expect(reasoned.locator(".work-count, .work-meta")).toHaveCount(0);
+
+	await send("silent");
+	await expect(page.getByTestId("message-assistant").last()).toContainText("静かに完了しました。", {
+		timeout: 10_000,
+	});
+	await expectDone();
+	const silent = page.getByTestId("work-group").last();
+	await expect(silent.locator(".work-label")).toHaveText("作業");
+	await expect(silent.locator(".work-dot.done")).toHaveCount(1);
+});
+
+test("keeps an open live work group stable while its heading streams", async () => {
+	await send("slowwork");
+	const work = page.getByTestId("work-group").first();
+	const label = work.locator(".work-label");
+	await expect(label).toContainText("Let me examine", { timeout: 10_000 });
+	const initial = (await label.textContent())?.length ?? 0;
+	await work.locator("summary").first().click();
+	await expect(work).toHaveAttribute("open", "");
+	await work.evaluate((element) => {
+		element.dataset.reuseCheck = "kept";
+	});
+	await expect
+		.poll(async () => (await label.textContent())?.length ?? 0, { timeout: 5000 })
+		.toBeGreaterThan(initial);
+	await expect(work).toHaveAttribute("data-reuse-check", "kept");
+	await expect(page.getByTestId("message-assistant").last()).toContainText(
+		"低速の理由を確認しました。",
+		{ timeout: 10_000 },
+	);
+	await expectDone();
+});
+
 test("refreshes the context ring while a response is streaming", async () => {
 	const button = page.locator("#contextButton");
 	const before = await button.getAttribute("title");
 	await send("long please");
 	await expect(page.getByTestId("message-live")).toContainText("chunk 2");
+	await expect(button).toHaveClass(/running/);
+	await button.click();
+	await expect(page.getByTestId("compact-button")).toHaveCount(0);
+	await button.click();
 	await expect.poll(() => button.getAttribute("title"), { timeout: 10_000 }).not.toBe(before);
 	await expectDone();
+	await expect(button).not.toHaveClass(/running/);
 	expect(await button.getAttribute("title")).toContain("コンテキスト");
 });
 
@@ -308,7 +381,8 @@ test("slash menu lists live Pi commands and inserts one", async () => {
 });
 
 test("plus menu searches commands and inserts without sending", async () => {
-	await expect(page.locator("#planPanel")).toBeHidden();
+	await expect(page.locator("#planPanel")).toBeVisible();
+	await expect(page.getByTestId("plan-item")).toHaveCount(0);
 	await page.locator("#commandButton").click();
 	await expect(page.locator("#commandMenu")).toBeVisible();
 	await expect(page.getByTestId("command-item").filter({ hasText: "/fix-tests" })).toHaveCount(1);
@@ -428,10 +502,10 @@ test("chooses steer or follow-up while a response is running", async () => {
 });
 
 test("shows, advances and clears the agent plan", async () => {
-	await expect(page.locator("#planPanel")).toBeHidden();
+	await expect(page.locator("#planPanel")).toBeVisible();
+	await expect(page.getByTestId("plan-item")).toHaveCount(0);
 	await send("plan start");
 	await expect(page.locator("#planPanel")).toBeVisible();
-	await expect(page.locator("#planPanel")).toHaveAttribute("open", "");
 	await expect(page.locator("#planTitle")).toHaveText("実装計画");
 	await expect(page.getByTestId("plan-item")).toHaveCount(5);
 	await expect(page.getByTestId("plan-item").first()).toBeVisible();
@@ -452,11 +526,72 @@ test("shows, advances and clears the agent plan", async () => {
 	await expectDone();
 
 	await send("plan clear");
-	await expect(page.locator("#planPanel")).toBeHidden();
+	await expect(page.locator("#planPanel")).toBeVisible();
+	await expect(page.getByTestId("plan-item")).toHaveCount(0);
 	await expectDone();
 	await page.reload();
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
-	await expect(page.locator("#planPanel")).toBeHidden();
+	await expect(page.locator("#planPanel")).toBeVisible();
+	await expect(page.getByTestId("plan-item")).toHaveCount(0);
+});
+
+test("keeps the plan on the right and only shows the current plan", async () => {
+	const plan = page.locator("#planPanel");
+	await expect(plan).toBeVisible();
+	await expect(page.getByTestId("plan-item")).toHaveCount(0);
+	const chatBox = await page.locator(".chat").boundingBox();
+	const planBox = await plan.boundingBox();
+	expect(planBox.x).toBeGreaterThan(chatBox.x + chatBox.width - 20);
+
+	await send("plan start");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await expectDone();
+
+	for (let index = 0; index < 3; index += 1) {
+		await send("plan advance");
+		await expectDone();
+	}
+	await expect(page.locator(".plan-item.done")).toHaveCount(5);
+
+	// A completed plan belongs to the turn that completed it. A new user
+	// message leaves the right panel empty until the agent updates the plan.
+	await send("hello");
+	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
+		timeout: 10_000,
+	});
+	await expect(page.getByTestId("plan-item")).toHaveCount(0);
+	await expect(plan).toBeVisible();
+
+	// Continuing the same work brings the same plan back, with a new item.
+	await send("plan continue");
+	await expect(page.getByTestId("plan-item")).toHaveCount(6);
+	await expect(page.getByTestId("plan-item").last()).toHaveAttribute("data-status", "pending");
+	await expectDone();
+
+	// A new independent task replaces the plan.
+	await send("plan start");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await expect(page.getByTestId("plan-item").last()).toHaveAttribute("data-status", "pending");
+	await expectDone();
+});
+
+test("opens the plan in a drawer on narrow screens", async () => {
+	await page.setViewportSize({ width: 700, height: 900 });
+	await expect(page.locator("#planToggle")).toBeVisible();
+	await expect
+		.poll(async () => (await page.locator("#planPanel").boundingBox()).x)
+		.toBeGreaterThanOrEqual(700);
+
+	await page.locator("#planToggle").click();
+	await expect(page.locator(".app")).toHaveClass(/plan-open/);
+	await expect(page.locator("#planBackdrop")).toBeVisible();
+	await expect
+		.poll(async () => (await page.locator("#planPanel").boundingBox()).x)
+		.toBeLessThan(700);
+
+	await page.locator("#planClose").click();
+	await expect(page.locator(".app")).not.toHaveClass(/plan-open/);
+	await expect(page.locator("#planBackdrop")).toBeHidden();
 });
 
 test("restores only the active branch plan after resuming", async () => {
@@ -554,6 +689,98 @@ test("resumes a session from the Pi history", async () => {
 	await expect(page.locator("#sessionName")).toHaveText("リファクタ作業");
 });
 
+test("deletes one history item after confirmation", async () => {
+	await page.locator("#historyButton").click();
+	const target = page.getByTestId("session-item").filter({ hasText: "過去の会話です" });
+	await expect(target.getByTestId("session-delete")).toBeVisible();
+	await target.getByTestId("session-delete").click();
+	const dialog = page.locator("#dialog");
+	await expect(dialog).toBeVisible();
+	await expect(dialog).toContainText("完全に削除");
+	await expect(dialog).toContainText("過去の会話です");
+	await page.getByTestId("local-dialog-confirm").click();
+	await expect(
+		page.getByTestId("session-item").filter({ hasText: "過去の会話です" }),
+	).toHaveCount(0);
+	await expect(access(workspace.older)).rejects.toThrow();
+	await expect(page.locator(".session-item.current").getByTestId("session-delete")).toHaveCount(0);
+});
+
+test("selects and deletes all history beyond the old 60 item limit", async () => {
+	for (let index = 0; index < 62; index += 1) {
+		const id = `bulk-${index}`;
+		await writeFile(
+			join(workspace.sessions, `2026-02-01T00-00-${String(index).padStart(2, "0")}-000Z_${id}.jsonl`),
+			sessionFile({
+				id,
+				cwd: workspace.project,
+				messages: [{ role: "user", content: `bulk ${index}` }],
+			}),
+		);
+	}
+	await page.locator("#historyButton").click();
+	await expect(page.locator("#sessionList")).toHaveAttribute("data-total", "65");
+	await page.locator("#historySelect").click();
+	await page.locator("#historySelectAll").click();
+	await expect(page.locator("#historyCount")).toHaveText("64 件");
+	await page.locator("#historyDelete").click();
+	await expect(page.locator("#dialog")).toContainText("64 件");
+	await page.getByTestId("local-dialog-confirm").click();
+	await expect(
+		page.getByTestId("toast").filter({ hasText: "64 件の履歴を削除しました" }),
+	).toBeVisible();
+	await expect(page.locator("#sessionList")).toHaveAttribute("data-total", "1");
+	await expect(page.getByTestId("session-item")).toHaveCount(1);
+	expect(await readdir(workspace.sessions)).toEqual([]);
+});
+
+test("rejects unknown paths and never deletes another project", async () => {
+	const otherDir = join(workspace.agent, "sessions", "--other-project--");
+	await mkdir(otherDir, { recursive: true });
+	const otherFile = join(otherDir, "2026-01-01T00-00-00-000Z_other.jsonl");
+	await writeFile(
+		otherFile,
+		sessionFile({
+			id: "other-project-session",
+			cwd: join(workspace.root, "other-project"),
+			messages: [{ role: "user", content: "other project" }],
+		}),
+	);
+
+	const traversal = await rpc({
+		type: "dock:delete_sessions",
+		ids: ["../../package.json"],
+	});
+	expect(traversal.ok).toBe(true);
+	expect(traversal.data.deleted).toBe(0);
+	expect(traversal.data.failed[0].error).toContain("見つかりません");
+
+	const removed = await rpc({ type: "dock:delete_sessions", all: true });
+	expect(removed.ok).toBe(true);
+	expect(removed.data.deleted).toBe(2);
+	await expect(access(otherFile)).resolves.toBeUndefined();
+});
+
+test("protects the active session from deletion", async () => {
+	const currentFile = join(workspace.sessions, "2026-01-05T00-00-00-000Z_current.jsonl");
+	await writeFile(
+		currentFile,
+		sessionFile({
+			id: "fake-session",
+			cwd: workspace.project,
+			messages: [{ role: "user", content: "current session" }],
+		}),
+	);
+	const result = await rpc({
+		type: "dock:delete_sessions",
+		ids: ["fake-session"],
+	});
+	expect(result.ok).toBe(true);
+	expect(result.data.deleted).toBe(0);
+	expect(result.data.failed[0].error).toContain("使用中");
+	await expect(access(currentFile)).resolves.toBeUndefined();
+});
+
 test("answers extension dialogs through RPC", async () => {
 	await send("please ask");
 	const dialog = page.locator("#dialog");
@@ -587,6 +814,32 @@ test("reload during streaming restores the run", async () => {
 	await expect(page.getByTestId("message-user")).toHaveCount(1);
 	await expectDone();
 	await expect(page.getByTestId("message-assistant")).toHaveCount(1);
+});
+
+test("shows the current run elapsed time and keeps it across reloads", async () => {
+	await send("long please");
+	const elapsed = page.getByTestId("run-elapsed");
+	await expect(elapsed).toBeVisible({ timeout: 10_000 });
+	await expect(elapsed).toHaveText(/^\d+h\d{2}m\d{2}s$/);
+	await expect(elapsed).not.toHaveText("0h00m00s", { timeout: 5000 });
+	const before = elapsedSeconds(await elapsed.textContent());
+
+	await input().fill("steer please");
+	await input().press("Control+Enter");
+	await expect(page.locator("#queueBadge")).toHaveText("1 待機");
+	await page.waitForTimeout(1200);
+	const after = elapsedSeconds(await elapsed.textContent());
+	expect(after).toBeGreaterThanOrEqual(before + 1);
+
+	await page.reload();
+	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+	const restored = page.getByTestId("run-elapsed");
+	await expect(restored).toBeVisible({ timeout: 10_000 });
+	await expect(restored).toHaveText(/^\d+h\d{2}m\d{2}s$/);
+	await expect(restored).not.toHaveText("0h00m00s");
+
+	await expectDone();
+	await expect(page.getByTestId("run-elapsed")).toHaveCount(0);
 });
 
 test("sanitises model HTML", async () => {
@@ -674,14 +927,17 @@ test("compacts the context from the menu", async () => {
 	await expect(page.getByTestId("toast").filter({ hasText: "圧縮しました" })).toBeVisible();
 	await expect(page.locator("#contextMenu")).toBeHidden();
 	// Directly after compaction Pi may have no valid context estimate yet.
-	await expect(page.locator("#contextButton")).toHaveAttribute("title", /不明/);
+	// Show an empty ring without inventing a value or adding a "unknown" label.
+	await expect(page.locator("#contextButton")).toHaveClass(/unknown/);
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /コンテキスト/);
+	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /不明/);
 	await expect(page.locator("#ringFg")).toHaveAttribute("stroke-dashoffset", "47.12");
 
 	await send("hello");
 	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
 		timeout: 10_000,
 	});
-	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /不明/);
+	await expect(page.locator("#contextButton")).not.toHaveClass(/unknown/);
 });
 
 test("restarts Pi after it exits", async () => {

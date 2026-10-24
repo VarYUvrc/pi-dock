@@ -6,7 +6,11 @@ import { fileURLToPath } from "node:url";
 import { PiBridge } from "./pi.js";
 import { LiveState } from "./live.js";
 import { PLAN_TOOL, normalizePlan, planFromEntries } from "./plan.js";
-import { listSessions } from "./sessions.js";
+import {
+	deleteSessionFile,
+	listSessions,
+	resolveSessionTargets,
+} from "./sessions.js";
 import {
 	clearCompactionThreshold,
 	describeCompaction,
@@ -157,6 +161,10 @@ export async function createDock({
 		if (state.sessionFile !== undefined) runtime.sessionFile = state.sessionFile;
 		if (state.sessionName !== undefined) runtime.sessionName = state.sessionName;
 		runtime.running = Boolean(state.isStreaming);
+		if (runtime.running && !runtime.runStartedAt) runtime.runStartedAt = Date.now();
+		if (!runtime.running && runtime.runStartedAt && !state.isStreaming) {
+			runtime.runStartedAt = null;
+		}
 		return state;
 	}
 
@@ -178,6 +186,7 @@ export async function createDock({
 			sessionFile: sessionPath,
 			sessionName: "",
 			running: false,
+			runStartedAt: null,
 			startedAt: Date.now(),
 			exit: null,
 			pendingUi: new Map(),
@@ -194,9 +203,13 @@ export async function createDock({
 		if (record.type === "session_info_changed") {
 			runtime.sessionName = record.name ?? "";
 		}
-		if (record.type === "agent_start") runtime.running = true;
+		if (record.type === "agent_start") {
+			runtime.running = true;
+			if (!runtime.runStartedAt) runtime.runStartedAt = Date.now();
+		}
 		if (record.type === "agent_settled") {
 			runtime.running = false;
+			runtime.runStartedAt = null;
 			refreshRuntimeState(runtime).catch(() => {});
 		}
 		if (
@@ -223,7 +236,11 @@ export async function createDock({
 			return;
 		}
 
-		broadcast({ ...record, runtime: runtime.id });
+		broadcast({
+			...record,
+			runtime: runtime.id,
+			...(record.type === "agent_start" ? { runStartedAt: runtime.runStartedAt } : {}),
+		});
 		if (record.type === "tool_execution_end" && record.toolName === PLAN_TOOL) {
 			broadcast({
 				type: "dock:plan",
@@ -247,6 +264,7 @@ export async function createDock({
 	function onRuntimeExit(runtime, info) {
 		runtime.live.reset();
 		runtime.running = false;
+		runtime.runStartedAt = null;
 		runtime.exit = info;
 		if (runtime === activeRuntime) {
 			broadcast({ type: "dock:exit", runtime: runtime.id, reason: info.reason });
@@ -321,7 +339,7 @@ export async function createDock({
 				live: true,
 			});
 		}
-		return [
+		const all = [
 			...live.sort((a, b) => b.modified.localeCompare(a.modified)),
 			...sessions.map((session) => {
 				const runtime = bySessionId.get(session.id);
@@ -333,6 +351,7 @@ export async function createDock({
 				};
 			}),
 		];
+		return { sessions: all, total: all.length };
 	}
 
 	function broadcast(record) {
@@ -364,12 +383,15 @@ export async function createDock({
 			if (state.sessionFile !== undefined) runtime.sessionFile = state.sessionFile;
 			if (state.sessionName !== undefined) runtime.sessionName = state.sessionName;
 			runtime.running = Boolean(state.isStreaming);
+			if (runtime.running && !runtime.runStartedAt) runtime.runStartedAt = Date.now();
+			if (!runtime.running) runtime.runStartedAt = null;
 		}
 		const compaction = await describeCompaction({ cwd, env, model: state?.model });
 		return {
 			runtime: runtime.id,
 			cwd,
 			state,
+			runStartedAt: runtime.runStartedAt,
 			live: runtime.live.snapshot(),
 			messages: Array.isArray(messages?.messages) ? messages.messages : [],
 			stats: stats ?? null,
@@ -410,6 +432,69 @@ export async function createDock({
 			runtime.live.reset();
 			await refreshRuntimeState(runtime);
 			return { restarted: true };
+		}
+		if (command.type === "dock:delete_sessions") {
+			const all = command.all === true;
+			const ids = Array.isArray(command.ids)
+				? command.ids.filter((id) => typeof id === "string" && id)
+				: null;
+			if (!all && (!ids || ids.length === 0)) {
+				throw new Error("削除対象が指定されていません");
+			}
+			const { targets, missing } = await resolveSessionTargets({
+				cwd,
+				ids,
+				all,
+				env,
+			});
+			const protectedPaths = new Set();
+			const protectedIds = new Set();
+			for (const runtime of runtimes.values()) {
+				if (runtime.exit) continue;
+				if (runtime !== activeRuntime && !runtime.running) continue;
+				if (runtime.sessionFile) protectedPaths.add(sessionKey(runtime.sessionFile));
+				if (runtime.sessionId) protectedIds.add(runtime.sessionId);
+			}
+
+			const failed = missing.map((id) => ({
+				id,
+				error: "セッションが見つかりません",
+			}));
+			let deleted = 0;
+			for (const target of targets) {
+				if (
+					protectedPaths.has(sessionKey(target.path)) ||
+					protectedIds.has(target.id)
+				) {
+					failed.push({ id: target.id, error: "使用中のセッションは削除できません" });
+					continue;
+				}
+				const runtime =
+					findRuntimeByPath(target.path) ??
+					[...runtimes.values()].find(
+						(candidate) => !candidate.exit && candidate.sessionId === target.id,
+					);
+				if (runtime) {
+					if (runtime.running) {
+						failed.push({
+							id: target.id,
+							error: "実行中のセッションは削除できません",
+						});
+						continue;
+					}
+					// A background session may have been opened earlier in this
+					// Dock run. Stop it before removing the file it writes to.
+					await runtime.bridge.stop().catch(() => {});
+					runtimes.delete(runtime.id);
+				}
+				try {
+					await deleteSessionFile({ cwd, path: target.path, env });
+					deleted += 1;
+				} catch (error) {
+					failed.push({ id: target.id, error: error.message });
+				}
+			}
+			return { deleted, failed };
 		}
 		if (command.type === "new_session") {
 			const runtime = await startRuntime();
