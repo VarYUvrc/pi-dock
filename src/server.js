@@ -5,9 +5,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PiBridge } from "./pi.js";
 import { LiveState } from "./live.js";
+import { PLAN_TOOL, normalizePlan, planFromEntries } from "./plan.js";
 import { listSessions } from "./sessions.js";
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
+const PLAN_EXTENSION = join(
+	dirname(fileURLToPath(import.meta.url)),
+	"..",
+	"extension",
+	"dock-plan.ts",
+);
 const MAX_BODY = 12 * 1024 * 1024;
 const HEARTBEAT_MS = 25_000;
 
@@ -112,7 +119,12 @@ export async function createDock({
 		assets.set(path, { body: await readFile(join(PUBLIC_DIR, file)), type });
 	}
 
-	const bridge = new PiBridge({ cwd, launcher, env, piArgs });
+	const bridge = new PiBridge({
+		cwd,
+		launcher,
+		env,
+		piArgs: ["--extension", PLAN_EXTENSION, ...piArgs],
+	});
 	const live = new LiveState();
 	const clients = new Set();
 	let sessionName;
@@ -123,6 +135,16 @@ export async function createDock({
 		live.apply(record);
 		if (record.type === "session_info_changed") sessionName = record.name;
 		broadcast(record);
+		if (record.type === "tool_execution_end" && record.toolName === PLAN_TOOL) {
+			broadcast({ type: "dock:plan", plan: normalizePlan(record.result?.details) });
+		}
+		if (
+			record.type === "message_end" &&
+			record.message?.role === "toolResult" &&
+			record.message.toolName === PLAN_TOOL
+		) {
+			broadcast({ type: "dock:plan", plan: normalizePlan(record.message.details) });
+		}
 	});
 	bridge.on("exit", (info) => {
 		live.reset();
@@ -142,13 +164,14 @@ export async function createDock({
 	}
 
 	async function snapshot() {
-		const [state, messages, stats, models, levels, commands] = await Promise.all([
+		const [state, messages, stats, models, levels, commands, entries] = await Promise.all([
 			bridge.request({ type: "get_state" }),
 			bridge.request({ type: "get_messages" }),
 			bridge.request({ type: "get_session_stats" }).catch(() => null),
 			bridge.request({ type: "get_available_models" }).catch(() => null),
 			bridge.request({ type: "get_available_thinking_levels" }).catch(() => null),
 			bridge.request({ type: "get_commands" }).catch(() => null),
+			bridge.request({ type: "get_entries" }).catch(() => null),
 		]);
 		if (state?.sessionName !== undefined) sessionName = state.sessionName;
 		return {
@@ -160,6 +183,7 @@ export async function createDock({
 			models: (models?.models ?? []).map(publicModel),
 			levels: levels?.levels ?? ["off"],
 			commands: commands?.commands ?? [],
+			plan: entries ? planFromEntries(entries.entries, entries.leafId) : null,
 		};
 	}
 

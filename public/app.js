@@ -13,6 +13,16 @@ const dom = {
 	stopButton: $("stopButton"),
 	composer: $("composer"),
 	composerLeft: $("composerLeft"),
+	commandButton: $("commandButton"),
+	commandMenu: $("commandMenu"),
+	imageButton: $("imageButton"),
+	imageInput: $("imageInput"),
+	attachments: $("attachments"),
+	sendMode: $("sendMode"),
+	planPanel: $("planPanel"),
+	planTitle: $("planTitle"),
+	planCurrent: $("planCurrent"),
+	planItems: $("planItems"),
 	queueBadge: $("queueBadge"),
 	scroller: $("scroller"),
 	messageList: $("messageList"),
@@ -67,6 +77,8 @@ const state = {
 	levels: ["off"],
 	commands: [],
 	messages: [],
+	plan: null,
+	attachments: [],
 	live: null,
 	tools: {},
 	toolRev: {},
@@ -79,6 +91,8 @@ const state = {
 	sessions: [],
 	menu: null,
 	slash: null,
+	commandMenu: null,
+	sendMode: "steer",
 };
 
 const openKeys = new Set();
@@ -193,6 +207,9 @@ async function refreshSnapshot() {
 	state.models = snapshot.models ?? [];
 	state.levels = snapshot.levels?.length ? snapshot.levels : ["off"];
 	state.commands = snapshot.commands ?? [];
+	state.plan = snapshot.plan ?? null;
+	state.attachments = [];
+	renderAttachments();
 	state.live = snapshot.live?.blocks?.length
 		? { blocks: snapshot.live.blocks, tools: snapshot.live.tools ?? {} }
 		: null;
@@ -213,6 +230,7 @@ async function refreshSnapshot() {
 	renderChrome();
 	renderMessages(true);
 	renderLive();
+	renderPlan();
 	renderRunStatus();
 	scrollToBottom(true);
 }
@@ -233,10 +251,15 @@ function handleRecord(record) {
 			renderLive();
 			renderRunStatus();
 			return;
+		case "dock:plan":
+			state.plan = record.plan ?? null;
+			renderPlan();
+			return;
 		case "agent_start":
 			state.running = true;
 			state.aborting = false;
 			state.retry = null;
+			state.sendMode = "steer";
 			state.live = { blocks: [], tools: state.tools };
 			renderChrome();
 			scheduleLive();
@@ -247,6 +270,7 @@ function handleRecord(record) {
 			state.running = false;
 			state.aborting = false;
 			state.retry = null;
+			state.sendMode = "steer";
 			state.live = null;
 			state.tools = {};
 			state.toolRev = {};
@@ -638,15 +662,27 @@ async function send() {
 	}
 	closeSlash();
 	closeMenus();
+	closeCommandMenu();
+	const images = state.attachments.map((attachment) => ({
+		type: "image",
+		data: attachment.data,
+		mimeType: attachment.mimeType,
+	}));
 	const command = { type: "prompt", message: text };
-	if (state.running) command.streamingBehavior = "steer";
+	if (images.length) command.images = images;
+	if (state.running) {
+		command.streamingBehavior = state.sendMode === "followUp" ? "followUp" : "steer";
+	}
+	const content = images.length ? [{ type: "text", text }, ...images] : text;
+	const restore = images.length ? state.attachments.slice() : [];
 	state.messages.push({
 		role: "user",
-		content: text,
+		content,
 		timestamp: Date.now(),
 		_optimistic: true,
 	});
 	dom.input.value = "";
+	clearAttachments();
 	autosize();
 	updateSendButton();
 	renderMessages();
@@ -660,7 +696,13 @@ async function send() {
 			autosize();
 			updateSendButton();
 		}
-		const index = state.messages.findIndex((message) => message._optimistic && message.content === text);
+		if (restore.length && !state.attachments.length) {
+			state.attachments = restore;
+			renderAttachments();
+		}
+		const index = state.messages.findIndex(
+			(message) => message._optimistic && textOfContent(message.content) === text,
+		);
 		if (index !== -1) state.messages.splice(index, 1);
 		renderMessages();
 	}
@@ -782,6 +824,140 @@ function updateSendButton() {
 	dom.sendButton.hidden = state.running && !hasText;
 }
 
+const MAX_ATTACHMENTS = 6;
+const MAX_ATTACHMENT_DATA = 10 * 1024 * 1024;
+let attachmentSequence = 0;
+
+function readAsDataURL(file) {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(String(reader.result ?? ""));
+		reader.onerror = () => reject(reader.error ?? new Error("画像を読み込めません"));
+		reader.readAsDataURL(file);
+	});
+}
+
+async function addImageFiles(files) {
+	const images = [...files].filter((file) => file.type?.startsWith("image/"));
+	if (!images.length) return;
+	let total = state.attachments.reduce((sum, attachment) => sum + attachment.data.length, 0);
+	for (const file of images) {
+		if (state.attachments.length >= MAX_ATTACHMENTS) {
+			toast(`画像は ${MAX_ATTACHMENTS} 枚までです`, "warning");
+			break;
+		}
+		try {
+			const url = await readAsDataURL(file);
+			const separator = url.indexOf(",");
+			if (separator === -1) continue;
+			const data = url.slice(separator + 1);
+			if (total + data.length > MAX_ATTACHMENT_DATA) {
+				toast("画像が大きすぎます", "warning");
+				continue;
+			}
+			state.attachments.push({
+				id: `image-${++attachmentSequence}`,
+				name: file.name || "image",
+				mimeType: file.type || "image/png",
+				data,
+				url,
+			});
+			total += data.length;
+		} catch (error) {
+			toast(error.message, "error");
+		}
+	}
+	renderAttachments();
+}
+
+function renderAttachments() {
+	dom.attachments.hidden = state.attachments.length === 0;
+	dom.attachments.replaceChildren(
+		...state.attachments.map((attachment) => {
+			const item = document.createElement("div");
+			item.className = "attachment";
+			item.dataset.testid = "attachment";
+			const image = document.createElement("img");
+			image.src = attachment.url;
+			image.alt = attachment.name;
+			image.title = attachment.name;
+			const remove = document.createElement("button");
+			remove.type = "button";
+			remove.className = "attachment-remove";
+			remove.dataset.id = attachment.id;
+			remove.dataset.testid = "attachment-remove";
+			remove.setAttribute("aria-label", "画像を削除");
+			remove.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>';
+			item.append(image, remove);
+			return item;
+		}),
+	);
+}
+
+function clearAttachments() {
+	state.attachments = [];
+	renderAttachments();
+}
+
+dom.imageButton.addEventListener("click", () => dom.imageInput.click());
+dom.imageInput.addEventListener("change", () => {
+	addImageFiles(dom.imageInput.files ?? []);
+	dom.imageInput.value = "";
+});
+
+dom.attachments.addEventListener("click", (event) => {
+	const remove = event.target.closest("[data-id]");
+	if (!remove) return;
+	state.attachments = state.attachments.filter((attachment) => attachment.id !== remove.dataset.id);
+	renderAttachments();
+});
+
+dom.input.addEventListener("paste", (event) => {
+	const clipboard = event.clipboardData;
+	const files = clipboard?.files?.length
+		? [...clipboard.files]
+		: [...(clipboard?.items ?? [])]
+				.filter((item) => item.kind === "file")
+				.map((item) => item.getAsFile())
+				.filter(Boolean);
+	const images = files.filter((file) => file.type.startsWith("image/"));
+	if (!images.length) return;
+	event.preventDefault();
+	addImageFiles(images);
+});
+
+dom.composer.addEventListener("dragover", (event) => {
+	if (!event.dataTransfer?.types.includes("Files")) return;
+	event.preventDefault();
+	dom.composer.classList.add("dragging");
+});
+
+dom.composer.addEventListener("dragleave", () => dom.composer.classList.remove("dragging"));
+
+dom.composer.addEventListener("drop", (event) => {
+	if (!event.dataTransfer?.files?.length) return;
+	event.preventDefault();
+	dom.composer.classList.remove("dragging");
+	addImageFiles(event.dataTransfer.files);
+});
+
+function renderSendMode() {
+	dom.sendMode.hidden = !state.running;
+	for (const buttonElement of dom.sendMode.querySelectorAll("[data-send-mode]")) {
+		buttonElement.setAttribute(
+			"aria-pressed",
+			String(buttonElement.dataset.sendMode === state.sendMode),
+		);
+	}
+}
+
+dom.sendMode.addEventListener("click", (event) => {
+	const buttonElement = event.target.closest("[data-send-mode]");
+	if (!buttonElement) return;
+	state.sendMode = buttonElement.dataset.sendMode === "followUp" ? "followUp" : "steer";
+	renderSendMode();
+});
+
 function isImeSubmit(event, now = performance.now()) {
 	if (event.isComposing || event.keyCode === 229 || composing) return true;
 	return now - compositionEndedAt < 120;
@@ -856,6 +1032,13 @@ dom.sendButton.addEventListener("click", () => send());
 dom.stopButton.addEventListener("click", () => abort());
 
 document.addEventListener("pointerdown", (event) => {
+	if (
+		state.commandMenu &&
+		!dom.commandMenu.contains(event.target) &&
+		!dom.commandButton.contains(event.target)
+	) {
+		closeCommandMenu();
+	}
 	if (!state.menu) return;
 	if (
 		dom.modelMenu.contains(event.target) ||
@@ -879,6 +1062,11 @@ document.addEventListener("keydown", (event) => {
 		respondDialog(state.dialogs[0], { cancelled: true });
 		return;
 	}
+	if (state.commandMenu) {
+		event.preventDefault();
+		closeCommandMenu();
+		return;
+	}
 	if (state.menu) {
 		event.preventDefault();
 		closeMenus();
@@ -897,6 +1085,7 @@ document.addEventListener("keydown", (event) => {
 
 window.addEventListener("resize", () => {
 	if (state.menu) closeMenus();
+	if (state.commandMenu) closeCommandMenu();
 });
 
 /* -------------------------------------------------------------- slash menu */
@@ -948,14 +1137,196 @@ function closeSlash() {
 	dom.slashMenu.replaceChildren();
 }
 
-function chooseSlash(command) {
+function insertCommand(command) {
 	if (!command) return;
 	dom.input.value = `/${command.name} `;
-	closeSlash();
 	autosize();
 	updateSendButton();
 	dom.input.focus();
 }
+
+function chooseSlash(command) {
+	if (!command) return;
+	closeSlash();
+	insertCommand(command);
+}
+
+function commandSourceLabel(source) {
+	if (source === "skill") return "Skill";
+	if (source === "extension") return "Extension";
+	if (source === "prompt" || source === "template") return "Prompt";
+	return "Command";
+}
+
+function commandSourceIcon(source) {
+	if (source === "skill") return "i-spark";
+	if (source === "extension") return "i-extension";
+	return "i-prompt";
+}
+
+function filterCommands(query) {
+	const value = query.trim().toLowerCase();
+	if (!value) return state.commands;
+	return state.commands.filter((command) => {
+		const haystack = `${command.name} ${command.description ?? ""} ${commandSourceLabel(
+			command.source,
+		)}`.toLowerCase();
+		return haystack.includes(value);
+	});
+}
+
+function openCommandMenu() {
+	if (state.commandMenu) {
+		closeCommandMenu();
+		return;
+	}
+	closeMenus();
+	closeSlash();
+	state.commandMenu = { query: "", index: 0, items: [] };
+	dom.commandMenu.innerHTML = `<div class="menu-search"><input type="text" placeholder="コマンドを検索" autocomplete="off" spellcheck="false" data-role="command-search" aria-label="コマンドを検索" /></div><div class="command-list" data-role="command-list" role="listbox" aria-label="コマンド"></div>`;
+	dom.commandMenu.hidden = false;
+	dom.commandButton.setAttribute("aria-expanded", "true");
+	renderCommandMenu();
+	positionCommandMenu();
+	dom.commandMenu.querySelector('[data-role="command-search"]')?.focus();
+	refreshCommands();
+}
+
+function positionCommandMenu() {
+	const popover = dom.commandMenu;
+	popover.style.visibility = "hidden";
+	popover.hidden = false;
+	const anchor = dom.composer.getBoundingClientRect();
+	const size = popover.getBoundingClientRect();
+	const left = Math.max(8, Math.min(anchor.left, window.innerWidth - size.width - 8));
+	let top = anchor.top - size.height - 8;
+	if (top < 8) top = Math.min(anchor.bottom + 8, window.innerHeight - size.height - 8);
+	popover.style.left = `${Math.round(left)}px`;
+	popover.style.top = `${Math.round(Math.max(8, top))}px`;
+	popover.style.visibility = "";
+}
+
+function renderCommandMenu() {
+	const menu = state.commandMenu;
+	if (!menu) return;
+	menu.items = filterCommands(menu.query);
+	if (menu.index >= menu.items.length) menu.index = Math.max(0, menu.items.length - 1);
+	const list = dom.commandMenu.querySelector('[data-role="command-list"]');
+	if (!list) return;
+	if (!menu.items.length) {
+		list.innerHTML = '<div class="menu-empty">見つかりません</div>';
+		return;
+	}
+	list.innerHTML = menu.items
+		.map((command, index) => {
+			const label = commandSourceLabel(command.source);
+			return `<button type="button" class="menu-item command-item${index === menu.index ? " active" : ""}" data-index="${index}" data-testid="command-item" data-source="${escapeHtml(
+				label,
+			)}" role="option" aria-selected="${index === menu.index}">
+				<svg class="icon" aria-hidden="true"><use href="#${commandSourceIcon(command.source)}"/></svg>
+				<span class="cmd-name">/${escapeHtml(command.name)}</span>
+				<span class="cmd-desc">${escapeHtml(command.description ?? "")}</span>
+				<span class="cmd-source">${escapeHtml(label)}</span>
+			</button>`;
+		})
+		.join("");
+	list.querySelector(".menu-item.active")?.scrollIntoView({ block: "nearest" });
+}
+
+function closeCommandMenu() {
+	state.commandMenu = null;
+	dom.commandMenu.hidden = true;
+	dom.commandMenu.replaceChildren();
+	dom.commandButton.removeAttribute("aria-expanded");
+}
+
+function chooseCommand(command) {
+	if (!command) return;
+	closeCommandMenu();
+	insertCommand(command);
+}
+
+async function refreshCommands() {
+	try {
+		const data = await api({ type: "get_commands" });
+		if (!Array.isArray(data?.commands)) return;
+		state.commands = data.commands;
+		if (state.commandMenu) renderCommandMenu();
+		if (state.slash) updateSlash();
+	} catch {
+		/* keep the last known commands */
+	}
+}
+
+let commandComposing = false;
+let commandCompositionEndedAt = Number.NEGATIVE_INFINITY;
+
+function isCommandIme(event) {
+	if (event.isComposing || event.keyCode === 229 || commandComposing) return true;
+	return performance.now() - commandCompositionEndedAt < 120;
+}
+
+dom.commandButton.addEventListener("click", openCommandMenu);
+
+dom.commandMenu.addEventListener(
+	"compositionstart",
+	() => {
+		commandComposing = true;
+	},
+	true,
+);
+
+dom.commandMenu.addEventListener(
+	"compositionend",
+	() => {
+		commandComposing = false;
+		commandCompositionEndedAt = performance.now();
+	},
+	true,
+);
+
+dom.commandMenu.addEventListener("input", (event) => {
+	if (!event.target.matches('[data-role="command-search"]') || !state.commandMenu) return;
+	state.commandMenu.query = event.target.value;
+	state.commandMenu.index = 0;
+	renderCommandMenu();
+});
+
+dom.commandMenu.addEventListener("keydown", (event) => {
+	const menu = state.commandMenu;
+	if (!menu) return;
+	if (event.key === "Escape") {
+		event.preventDefault();
+		event.stopPropagation();
+		closeCommandMenu();
+		dom.input.focus();
+		return;
+	}
+	if (event.key === "Enter") {
+		if (isCommandIme(event)) return;
+		event.preventDefault();
+		chooseCommand(menu.items[menu.index]);
+		return;
+	}
+	if (event.key === "Tab") {
+		event.preventDefault();
+		chooseCommand(menu.items[menu.index]);
+		return;
+	}
+	if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+		event.preventDefault();
+		if (!menu.items.length) return;
+		const delta = event.key === "ArrowDown" ? 1 : -1;
+		menu.index = (menu.index + delta + menu.items.length) % menu.items.length;
+		renderCommandMenu();
+	}
+});
+
+dom.commandMenu.addEventListener("click", (event) => {
+	const item = event.target.closest("[data-index]");
+	if (!item || !state.commandMenu) return;
+	chooseCommand(state.commandMenu.items[Number(item.dataset.index)]);
+});
 
 dom.slashMenu.addEventListener("click", (event) => {
 	const item = event.target.closest("[data-index]");
@@ -973,6 +1344,7 @@ function openMenu(kind) {
 	}
 	closeMenus();
 	closeSlash();
+	closeCommandMenu();
 	state.menu = kind;
 	const anchor =
 		kind === "model"
@@ -1202,6 +1574,7 @@ dom.contextMenu.addEventListener("click", async (event) => {
 function openHistory() {
 	closeMenus();
 	closeSlash();
+	closeCommandMenu();
 	dom.historyPanel.hidden = false;
 	dom.drawerBackdrop.hidden = false;
 	dom.historyButton.setAttribute("aria-expanded", "true");
@@ -1297,6 +1670,36 @@ function collectToolResults(messages) {
 	return { results, calls };
 }
 
+function renderPlan() {
+	const plan = state.plan;
+	const items = Array.isArray(plan?.items) ? plan.items : [];
+	dom.planPanel.hidden = items.length === 0;
+	if (!items.length) {
+		dom.planCurrent.textContent = "";
+		dom.planItems.replaceChildren();
+		return;
+	}
+	dom.planTitle.textContent = plan.title || "計画";
+	const current = items.find((item) => item.status === "in_progress");
+	dom.planCurrent.textContent = current?.text ?? "";
+	const nodes = items.map((item) => {
+		const entry = document.createElement("li");
+		entry.className = `plan-item ${item.status}`;
+		entry.dataset.status = item.status;
+		entry.dataset.testid = "plan-item";
+		if (item.status === "in_progress") entry.setAttribute("aria-current", "step");
+		const box = document.createElement("span");
+		box.className = "plan-box";
+		box.setAttribute("aria-hidden", "true");
+		const text = document.createElement("span");
+		text.className = "plan-text";
+		text.textContent = item.text;
+		entry.append(box, text);
+		return entry;
+	});
+	dom.planItems.replaceChildren(...nodes);
+}
+
 function messageRevision(message, ctx) {
 	if (message.role === "user") {
 		return `u:${textOfContent(message.content).length}:${message.timestamp}:${message._optimistic ? "o" : ""}`;
@@ -1353,7 +1756,7 @@ function renderMessage(message, index, ctx) {
 	if (message.role === "user") return renderUser(message);
 	if (message.role === "assistant") return renderAssistant(message, index, ctx, false);
 	if (message.role === "toolResult") {
-		if (ctx.calls.has(message.toolCallId)) {
+		if (ctx.calls.has(message.toolCallId) || message.toolName === "dock_plan") {
 			const skip = document.createElement("div");
 			skip.hidden = true;
 			return skip;
@@ -1478,6 +1881,7 @@ function renderBlocks(blocks, prefix, ctx) {
 			return;
 		}
 		if (block.type === "toolCall") {
+			if (block.name === "dock_plan" || state.tools[block.id]?.name === "dock_plan") return;
 			const result = ctx.results.get(block.id);
 			const tool = state.tools[block.id];
 			const args = tool?.args ?? block.arguments ?? parseArgs(block.partialArgs);
@@ -1640,6 +2044,7 @@ function renderChrome() {
 		: "コンテキスト";
 
 	updateSendButton();
+	renderSendMode();
 	const queued = state.queue.steering.length + state.queue.followUp.length;
 	dom.queueBadge.hidden = queued === 0;
 	dom.queueBadge.textContent = `${queued} 待機`;
@@ -1797,6 +2202,7 @@ async function boot() {
 	applyTheme();
 	renderChrome();
 	renderLive();
+	renderPlan();
 	renderRunStatus();
 	autosize();
 	if (!TOKEN) {

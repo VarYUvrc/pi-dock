@@ -35,12 +35,22 @@ const COMMANDS = [
 		source: "skill",
 		sourceInfo: { path: "/tmp/review", source: "local", scope: "user", origin: "top-level" },
 	},
+	{
+		name: "deploy",
+		description: "Deploy the project",
+		source: "extension",
+		sourceInfo: { path: "/tmp/deploy.ts", source: "local", scope: "project", origin: "top-level" },
+	},
 ];
 
 const SLOW = process.env.FAKE_PI_SPEED === "slow" ? 60 : 12;
 
 const session = {
 	messages: [],
+	entries: [],
+	leafId: null,
+	nextEntry: 1,
+	plan: null,
 	model: MODELS[0],
 	thinkingLevel: "off",
 	sessionId: "fake-session",
@@ -113,8 +123,68 @@ function assistant(content, stopReason = "stop") {
 	};
 }
 
-function user(content) {
-	return { role: "user", content, timestamp: Date.now() };
+function user(content, images = []) {
+	return {
+		role: "user",
+		content: images.length ? [{ type: "text", text: content }, ...images] : content,
+		timestamp: Date.now(),
+	};
+}
+
+function pushMessage(message) {
+	const id = `e${Date.now().toString(36)}${(session.nextEntry++).toString(36)}`;
+	session.entries.push({
+		type: "message",
+		id,
+		parentId: session.leafId,
+		timestamp: new Date().toISOString(),
+		message,
+	});
+	session.leafId = id;
+	session.messages.push(message);
+}
+
+function formatPlan(plan) {
+	const marks = { done: "[x]", in_progress: "[>]", pending: "[ ]", cancelled: "[-]" };
+	const lines = plan.title ? [plan.title] : [];
+	for (const item of plan.items) lines.push(`${marks[item.status]} ${item.id}: ${item.text}`);
+	return lines.length ? lines.join("\n") : "No plan";
+}
+
+function applyPlan(args) {
+	const existing = new Map((session.plan?.items ?? []).map((item) => [item.id, item]));
+	let items = (session.plan?.items ?? []).map((item) => ({ ...item }));
+	let nextId = session.plan?.nextId ?? 1;
+	let title = session.plan?.title;
+	if (args.action === "set") {
+		items = [];
+		for (const raw of args.items ?? []) {
+			const current = raw.id ? existing.get(raw.id) : undefined;
+			const text = raw.text ?? current?.text;
+			const id = current ? current.id : `p${nextId++}`;
+			items.push({ id, text, status: raw.status ?? current?.status ?? "pending" });
+		}
+		title = args.title;
+	} else if (args.action === "add") {
+		items.push({ id: `p${nextId++}`, text: args.text, status: args.status ?? "pending" });
+	} else if (args.action === "update") {
+		const item = items.find((candidate) => candidate.id === args.id);
+		if (item) {
+			if (args.text) item.text = args.text;
+			if (args.status) item.status = args.status;
+		}
+	} else if (args.action === "remove") {
+		items = items.filter((item) => item.id !== args.id);
+	} else if (args.action === "clear") {
+		items = [];
+		nextId = 1;
+		title = undefined;
+	}
+	session.plan = { ...(title ? { title } : {}), items, nextId };
+	return {
+		content: [{ type: "text", text: formatPlan(session.plan) }],
+		details: { ...session.plan, action: args.action },
+	};
 }
 
 async function streamAssistant(parts, { slow = false } = {}) {
@@ -186,7 +256,7 @@ async function streamAssistant(parts, { slow = false } = {}) {
 	}
 	const final = assistant(content, session.aborted ? "aborted" : "stop");
 	write({ type: "message_end", message: final });
-	session.messages.push(final);
+	pushMessage(final);
 	write({ type: "turn_end", message: final, toolResults: [] });
 	write({ type: "agent_end", messages: [final], willRetry: false });
 	session.running = false;
@@ -213,11 +283,15 @@ async function runTool() {
 		partialResult: { content: [{ type: "text", text: "partial" }] },
 	});
 	await sleep(20);
+	const outcome =
+		call.name === "dock_plan"
+			? applyPlan(call.arguments)
+			: { content: [{ type: "text", text: "hi from fake pi\n" }], details: {} };
 	write({
 		type: "tool_execution_end",
 		toolCallId: call.id,
 		toolName: call.name,
-		result: { content: [{ type: "text", text: "hi from fake pi\n" }] },
+		result: outcome,
 		isError: false,
 		durationMs: 41,
 	});
@@ -225,13 +299,14 @@ async function runTool() {
 		role: "toolResult",
 		toolCallId: call.id,
 		toolName: call.name,
-		content: [{ type: "text", text: "hi from fake pi\n" }],
+		content: outcome.content,
+		details: outcome.details,
 		isError: false,
 		timestamp: Date.now(),
 	};
 	write({ type: "message_start", message: { ...result, content: [] } });
 	write({ type: "message_end", message: result });
-	session.messages.push(result);
+	pushMessage(result);
 }
 
 function chunk(text, size = 5) {
@@ -240,13 +315,54 @@ function chunk(text, size = 5) {
 	return chunks.length ? chunks : [""];
 }
 
-async function prompt(message) {
-	write({ type: "message_start", message: user(message) });
-	write({ type: "message_end", message: user(message) });
-	session.messages.push(user(message));
+async function planPrompt(message) {
+	const current = session.plan;
+	let args;
+	if (message.includes("clear")) {
+		args = { action: "clear" };
+	} else if (message.includes("advance")) {
+		const items = (current?.items ?? []).map((item) => ({ ...item }));
+		const active = items.find((item) => item.status === "in_progress");
+		if (active) active.status = "done";
+		const next = items.find((item) => item.status === "pending");
+		if (next) next.status = "in_progress";
+		args = { action: "set", title: current?.title ?? "実装計画", items };
+	} else if (message.includes("cancel")) {
+		const items = (current?.items ?? []).map((item) => ({ ...item }));
+		const target = items.filter((item) => item.status === "pending").at(-1);
+		if (target) target.status = "cancelled";
+		args = { action: "set", title: current?.title ?? "実装計画", items };
+	} else {
+		args = {
+			action: "set",
+			title: "実装計画",
+			items: [
+				{ text: "RPCの確認", status: "done" },
+				{ text: "UIの実装", status: "done" },
+				{ text: "既存機能との統合", status: "in_progress" },
+				{ text: "E2Eテスト", status: "pending" },
+				{ text: "最終検証", status: "pending" },
+			],
+		};
+	}
+	await streamAssistant([{ type: "toolCall", name: "dock_plan", args }]);
+	await runTool();
+	await streamAssistant([{ type: "text", text: `plan action: ${args.action}` }]);
+}
+
+async function prompt(message, images = []) {
+	const userMessage = user(message, images);
+	write({ type: "message_start", message: userMessage });
+	write({ type: "message_end", message: userMessage });
+	pushMessage(userMessage);
 
 	if (message.startsWith("/")) {
 		await streamAssistant([{ type: "text", text: `command accepted: ${message.split(/\s/)[0]}` }]);
+		return;
+	}
+
+	if (message.includes("plan")) {
+		await planPrompt(message);
 		return;
 	}
 
@@ -338,6 +454,9 @@ async function handle(record) {
 		case "get_messages":
 			respond(id, type, { messages: session.messages });
 			return;
+		case "get_entries":
+			respond(id, type, { entries: session.entries, leafId: session.leafId });
+			return;
 		case "get_session_stats":
 			respond(id, type, {
 				sessionFile: session.sessionFile,
@@ -391,6 +510,10 @@ async function handle(record) {
 			return;
 		case "new_session":
 			session.messages = [];
+			session.entries = [];
+			session.leafId = null;
+			session.nextEntry = 1;
+			session.plan = null;
 			session.sessionId = `fake-${++session.sequence}`;
 			session.sessionFile = undefined;
 			session.sessionName = undefined;
@@ -416,6 +539,11 @@ async function handle(record) {
 				session.sessionId = header?.id ?? "imported";
 				session.sessionFile = path;
 				session.sessionName = info?.name;
+				session.entries = entries.filter(
+					(entry) => entry.type !== "session" && typeof entry.id === "string",
+				);
+				session.leafId = session.entries.at(-1)?.id ?? null;
+				session.plan = null;
 				session.messages = entries
 					.filter((entry) => entry.type === "message")
 					.map((entry) => entry.message);
@@ -427,13 +555,17 @@ async function handle(record) {
 		}
 		case "prompt":
 			if (session.running && record.streamingBehavior) {
-				session.steering.push(record.message);
+				if (record.streamingBehavior === "followUp") {
+					session.followUp.push(record.message);
+				} else {
+					session.steering.push(record.message);
+				}
 				write({ type: "queue_update", steering: [...session.steering], followUp: [...session.followUp] });
 				respond(id, type, { disposition: "queued" });
 				return;
 			}
 			respond(id, type, { disposition: session.running ? "queued" : "started" });
-			if (!session.running) prompt(record.message).catch(() => {});
+			if (!session.running) prompt(record.message, record.images ?? []).catch(() => {});
 			return;
 		case "steer":
 			session.steering.push(record.message);

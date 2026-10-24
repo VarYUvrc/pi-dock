@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
+import { join } from "node:path";
 import { setupWorkspace, startDock, stopDock } from "./harness.js";
+
+const PNG_BASE64 =
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 let workspace;
 let dock;
@@ -191,6 +196,220 @@ test("slash menu lists live Pi commands and inserts one", async () => {
 	await expect(page.getByTestId("message-assistant").last()).toContainText(
 		"command accepted: /fix-tests",
 	);
+});
+
+test("plus menu searches commands and inserts without sending", async () => {
+	await expect(page.locator("#planPanel")).toBeHidden();
+	await page.locator("#commandButton").click();
+	await expect(page.locator("#commandMenu")).toBeVisible();
+	await expect(page.getByTestId("command-item")).toHaveCount(3);
+	await expect(page.locator("#commandMenu")).toContainText("Prompt");
+	await expect(page.locator("#commandMenu")).toContainText("Skill");
+	await expect(page.locator("#commandMenu")).toContainText("Extension");
+
+	const search = page.locator('[data-role="command-search"]');
+	await search.fill("review");
+	await expect(page.getByTestId("command-item")).toHaveCount(1);
+	await search.evaluate((element) => {
+		element.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+		element.dispatchEvent(
+			new KeyboardEvent("keydown", {
+				key: "Enter",
+				code: "Enter",
+				keyCode: 229,
+				which: 229,
+				isComposing: true,
+				bubbles: true,
+				cancelable: true,
+			}),
+		);
+		element.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+	});
+	await expect(input()).toHaveValue("");
+	await expect(page.locator("#commandMenu")).toBeVisible();
+	await page.waitForTimeout(150);
+	await search.press("Enter");
+	await expect(page.locator("#commandMenu")).toBeHidden();
+	await expect(input()).toHaveValue("/skill:review ");
+	await expect(page.getByTestId("message-user")).toHaveCount(0);
+
+	await input().fill("");
+	await page.locator("#commandButton").click();
+	await search.press("ArrowDown");
+	await search.press("ArrowDown");
+	await search.press("Enter");
+	await expect(input()).toHaveValue("/deploy ");
+	await input().press("Control+Enter");
+	await expect(page.getByTestId("message-assistant").last()).toContainText(
+		"command accepted: /deploy",
+	);
+	await expectDone();
+
+	await input().fill("/");
+	await expect(page.getByTestId("slash-item").first()).toBeVisible();
+});
+
+test("attaches, pastes, drops and sends images", async () => {
+	await page.locator("#imageInput").setInputFiles({
+		name: "attached.png",
+		mimeType: "image/png",
+		buffer: Buffer.from(PNG_BASE64, "base64"),
+	});
+	await expect(page.getByTestId("attachment")).toHaveCount(1);
+	await expect(page.getByTestId("attachment").first().locator("img")).toHaveAttribute(
+		"src",
+		/^data:image\/png;base64,/,
+	);
+
+	await input().evaluate((element, base64) => {
+		const bytes = Uint8Array.from(atob(base64), (value) => value.charCodeAt(0));
+		const transfer = new DataTransfer();
+		transfer.items.add(new File([bytes], "pasted.png", { type: "image/png" }));
+		const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+		Object.defineProperty(event, "clipboardData", { value: transfer });
+		element.dispatchEvent(event);
+	}, PNG_BASE64);
+	await expect(page.getByTestId("attachment")).toHaveCount(2);
+
+	await page.locator("#composer").evaluate((element, base64) => {
+		const bytes = Uint8Array.from(atob(base64), (value) => value.charCodeAt(0));
+		const transfer = new DataTransfer();
+		transfer.items.add(new File([bytes], "dropped.png", { type: "image/png" }));
+		element.dispatchEvent(
+			new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }),
+		);
+	}, PNG_BASE64);
+	await expect(page.getByTestId("attachment")).toHaveCount(3);
+
+	await page.getByTestId("attachment-remove").first().click();
+	await expect(page.getByTestId("attachment")).toHaveCount(2);
+
+	await input().fill("look at these");
+	await input().press("Control+Enter");
+	await expect(page.getByTestId("message-user")).toContainText("look at these");
+	await expect(page.getByTestId("message-user").locator("img")).toHaveCount(2);
+	await expect(page.locator("#attachments")).toBeHidden();
+	await expectDone();
+	await expect(page.getByTestId("message-user").locator("img")).toHaveCount(2);
+});
+
+test("chooses steer or follow-up while a response is running", async () => {
+	await send("long please");
+	await expect(page.getByTestId("message-live")).toContainText("chunk 2");
+	const mode = page.locator("#sendMode");
+	await expect(mode).toBeVisible();
+
+	await page.locator('[data-send-mode="followUp"]').click();
+	await expect(page.locator('[data-send-mode="followUp"]')).toHaveAttribute("aria-pressed", "true");
+	await input().fill("after this");
+	await input().press("Control+Enter");
+	await expect(page.locator("#queueBadge")).toHaveText("1 待機");
+
+	await page.locator('[data-send-mode="steer"]').click();
+	await input().fill("now this");
+	await input().press("Control+Enter");
+	await expect(page.locator("#queueBadge")).toHaveText("2 待機");
+
+	await page.locator("#stopButton").click();
+	await expectDone();
+	await expect(input()).toHaveValue("now this\nafter this");
+	await expect(mode).toBeHidden();
+});
+
+test("shows, advances and clears the agent plan", async () => {
+	await expect(page.locator("#planPanel")).toBeHidden();
+	await send("plan start");
+	await expect(page.locator("#planPanel")).toBeVisible();
+	await expect(page.locator("#planTitle")).toHaveText("実装計画");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await expect(
+		page.getByTestId("plan-item").filter({ hasText: "RPCの確認" }),
+	).toHaveAttribute("data-status", "done");
+	const integration = page.getByTestId("plan-item").filter({ hasText: "既存機能との統合" });
+	await expect(integration).toHaveAttribute("data-status", "in_progress");
+	await expect(integration).toHaveAttribute("aria-current", "step");
+	await expectDone();
+
+	await send("plan advance");
+	await expect(integration).toHaveAttribute("data-status", "done");
+	await expect(page.getByTestId("plan-item").filter({ hasText: "E2Eテスト" })).toHaveAttribute(
+		"data-status",
+		"in_progress",
+	);
+	await expectDone();
+
+	await send("plan clear");
+	await expect(page.locator("#planPanel")).toBeHidden();
+	await expectDone();
+	await page.reload();
+	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+	await expect(page.locator("#planPanel")).toBeHidden();
+});
+
+test("restores only the active branch plan after resuming", async () => {
+	const stamp = "2026-01-03T00:00:00.000Z";
+	const timestamp = Date.parse(stamp);
+	const message = (id, parentId, value) => ({
+		type: "message",
+		id,
+		parentId,
+		timestamp: stamp,
+		message: { timestamp, ...value },
+	});
+	const plan = (title, text, status) => ({
+		role: "toolResult",
+		toolCallId: `call_${title}`,
+		toolName: "dock_plan",
+		content: [{ type: "text", text }],
+		isError: false,
+		details: {
+			action: "set",
+			title,
+			items: [{ id: "p1", text, status }],
+			nextId: 2,
+		},
+	});
+	const lines = [
+		{ type: "session", version: 3, id: "session-branch", timestamp: stamp, cwd: workspace.project },
+		message("e1", null, { role: "user", content: "branch root" }),
+		message("e2", "e1", plan("Older active plan", "Older step", "done")),
+		message("e3", "e2", plan("Active plan", "Active step", "in_progress")),
+		message("e4", "e3", {
+			role: "assistant",
+			content: [{ type: "text", text: "active branch" }],
+			stopReason: "stop",
+		}),
+		message("e5", "e4", { role: "user", content: "abandoned branch" }),
+		message("e6", "e5", plan("Abandoned plan", "Abandoned step", "pending")),
+		message("e7", "e4", {
+			role: "assistant",
+			content: [{ type: "text", text: "current leaf" }],
+			stopReason: "stop",
+		}),
+		{
+			type: "compaction",
+			id: "e8",
+			parentId: "e7",
+			timestamp: stamp,
+			summary: "compacted",
+			firstKeptEntryId: "e4",
+		},
+		{ type: "session_info", id: "e9", parentId: "e8", timestamp: stamp, name: "分岐テスト" },
+	];
+	await writeFile(
+		join(workspace.sessions, "2026-01-03T00-00-00-000Z_branch.jsonl"),
+		`${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+	);
+
+	await page.locator("#historyButton").click();
+	await page.getByTestId("session-item").filter({ hasText: "分岐テスト" }).click();
+	await expect(page.locator("#planPanel")).toBeVisible();
+	await expect(page.locator("#planTitle")).toHaveText("Active plan");
+	await expect(page.getByTestId("plan-item")).toHaveCount(1);
+	await expect(page.getByTestId("plan-item")).toContainText("Active step");
+	await expect(page.getByTestId("plan-item")).toHaveAttribute("aria-current", "step");
+	await expect(page.locator("#planPanel")).not.toContainText("Abandoned");
+	await expect(page.locator("#planPanel")).not.toContainText("Older");
 });
 
 test("models and thinking levels follow Pi", async () => {
