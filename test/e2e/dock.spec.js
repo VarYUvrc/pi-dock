@@ -64,6 +64,7 @@ async function rpc(command) {
 test("loads the shell and enforces the token", async () => {
 	await expect(page.locator(".brand")).toContainText("Pi-dock");
 	await expect(page.locator("#projectName")).toHaveText("project");
+	await expect(page.locator("#projectName .icon use")).toHaveAttribute("href", "#i-folder");
 	await expect(page.locator(".top-actions > #projectName + #modelButton")).toHaveCount(1);
 	await expect(page.locator("#composer")).toBeVisible();
 	await expect(page.getByTestId("message-user")).toHaveCount(0);
@@ -618,6 +619,24 @@ test("keeps the plan on the right and only shows the current plan", async () => 
 	await expectDone();
 });
 
+test("keeps a session plan when switching in history", async () => {
+	await send("plan start");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await expectDone();
+
+	await page.locator("#historyButton").click();
+	await page.getByTestId("session-item").filter({ hasText: "過去の会話です" }).click();
+	await expect(page.getByTestId("plan-item")).toHaveCount(0);
+
+	await page.locator("#historyButton").click();
+	await page.getByTestId("session-item").filter({ hasText: "無題の会話" }).click();
+	await expect(page.locator("#planTitle")).toHaveText("実装計画");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await expect(
+		page.getByTestId("plan-item").filter({ hasText: "既存機能との統合" }),
+	).toHaveAttribute("data-status", "in_progress");
+});
+
 test("resizes the plan panel by dragging its edge", async () => {
 	const panel = page.locator("#planPanel");
 	const initial = (await panel.boundingBox()).width;
@@ -682,7 +701,22 @@ test("restores only the active branch plan after resuming", async () => {
 		message("e1", null, { role: "user", content: "branch root" }),
 		message("e2", "e1", plan("Older active plan", "Older step", "done")),
 		message("e3", "e2", plan("Active plan", "Active step", "in_progress")),
-		message("e4", "e3", {
+		{
+			type: "custom",
+			id: "e3a",
+			parentId: "e3",
+			timestamp: stamp,
+			customType: "dock_plan_state",
+			data: {
+				title: "Active plan",
+				items: [
+					{ id: "p1", text: "Active step", status: "done" },
+					{ id: "p2", text: "Next step", status: "in_progress" },
+				],
+				nextId: 3,
+			},
+		},
+		message("e4", "e3a", {
 			role: "assistant",
 			content: [{ type: "text", text: "active branch" }],
 			stopReason: "stop",
@@ -713,9 +747,11 @@ test("restores only the active branch plan after resuming", async () => {
 	await page.getByTestId("session-item").filter({ hasText: "分岐テスト" }).click();
 	await expect(page.locator("#planPanel")).toBeVisible();
 	await expect(page.locator("#planTitle")).toHaveText("Active plan");
-	await expect(page.getByTestId("plan-item")).toHaveCount(1);
-	await expect(page.getByTestId("plan-item")).toContainText("Active step");
-	await expect(page.getByTestId("plan-item")).toHaveAttribute("aria-current", "step");
+	await expect(page.getByTestId("plan-item")).toHaveCount(2);
+	await expect(page.getByTestId("plan-item").first()).toContainText("Active step");
+	await expect(page.getByTestId("plan-item").first()).toHaveAttribute("data-status", "done");
+	await expect(page.getByTestId("plan-item").last()).toContainText("Next step");
+	await expect(page.getByTestId("plan-item").last()).toHaveAttribute("aria-current", "step");
 	await expect(page.locator("#planPanel")).not.toContainText("Abandoned");
 	await expect(page.locator("#planPanel")).not.toContainText("Older");
 });

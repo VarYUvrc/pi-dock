@@ -1,4 +1,5 @@
 export const PLAN_TOOL = "dock_plan";
+export const PLAN_STATE_ENTRY = "dock_plan_state";
 
 const STATUSES = new Set(["pending", "in_progress", "done", "cancelled"]);
 
@@ -24,6 +25,17 @@ export function normalizePlan(details) {
 	return { title, items };
 }
 
+function planFromEntry(entry) {
+	if (!entry || typeof entry !== "object") return null;
+	if (entry.type === "custom" && entry.customType === PLAN_STATE_ENTRY) {
+		return normalizePlan(entry.data);
+	}
+	if (entry.type !== "message") return null;
+	const message = entry.message;
+	if (message?.role !== "toolResult" || message.toolName !== PLAN_TOOL) return null;
+	return normalizePlan(message.details);
+}
+
 /**
  * Pick the newest plan from the active branch. get_entries also returns
  * abandoned branches, so walking from leafId is required.
@@ -44,10 +56,7 @@ export function planFromEntries(entries, leafId) {
 		current = entry.parentId ?? null;
 	}
 	for (const [index, entry] of branch.entries()) {
-		if (entry.type !== "message") continue;
-		const message = entry.message;
-		if (message?.role !== "toolResult" || message.toolName !== PLAN_TOOL) continue;
-		const plan = normalizePlan(message.details);
+		const plan = planFromEntry(entry);
 		if (!plan) continue;
 		// A completed plan belongs to the turn that completed it. Once a newer
 		// user message arrives, keep it in Pi's history but leave the right

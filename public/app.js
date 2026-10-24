@@ -33,6 +33,7 @@ const dom = {
 	empty: $("empty"),
 	jumpButton: $("jumpButton"),
 	projectName: $("projectName"),
+	projectLabel: $("projectLabel"),
 	sessionName: $("sessionName"),
 	modelButton: $("modelButton"),
 	modelLabel: $("modelLabel"),
@@ -2385,6 +2386,8 @@ function hideCompletedPlanForNewTurn() {
 	renderPlan();
 }
 
+let previousPlanStatuses = new Map();
+
 function renderPlan() {
 	const plan = state.plan;
 	const items = Array.isArray(plan?.items) ? plan.items : [];
@@ -2394,15 +2397,30 @@ function renderPlan() {
 	dom.planItems.hidden = !hasPlan;
 	dom.planTitle.textContent = hasPlan ? plan.title || "計画" : "計画";
 	if (!hasPlan) {
+		previousPlanStatuses = new Map();
 		dom.planItems.replaceChildren();
 		return;
 	}
+	// Stagger checkmarks that turn done together so a batched plan update still
+	// reads as steps filling in one by one.
+	const newlyDone = [];
+	const statuses = new Map();
+	for (const item of items) {
+		const previous = previousPlanStatuses.get(item.id);
+		statuses.set(item.id, item.status);
+		if (item.status === "done" && previous && previous !== "done") {
+			newlyDone.push(item.id);
+		}
+	}
+	previousPlanStatuses = statuses;
 	const nodes = items.map((item) => {
 		const entry = document.createElement("li");
 		entry.className = `plan-item ${item.status}`;
 		entry.dataset.status = item.status;
 		entry.dataset.testid = "plan-item";
 		if (item.status === "in_progress") entry.setAttribute("aria-current", "step");
+		const order = newlyDone.indexOf(item.id);
+		if (order !== -1) entry.style.setProperty("--plan-delay", `${order * 140}ms`);
 		const box = document.createElement("span");
 		box.className = "plan-box";
 		box.setAttribute("aria-hidden", "true");
@@ -2964,7 +2982,8 @@ function renderRunStatus() {
 
 function renderChrome() {
 	const project = state.cwd ? state.cwd.split(/[\\/]/).filter(Boolean).pop() : "";
-	dom.projectName.textContent = project;
+	dom.projectLabel.textContent = project;
+	dom.projectName.hidden = !project;
 	dom.projectName.title = state.cwd;
 	dom.sessionName.textContent = state.sessionName;
 	dom.sessionName.title = state.sessionName;

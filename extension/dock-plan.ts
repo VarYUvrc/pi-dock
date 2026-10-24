@@ -13,6 +13,9 @@ import { Type } from "typebox";
 const STATUSES = ["pending", "in_progress", "done", "cancelled"] as const;
 type PlanStatus = (typeof STATUSES)[number];
 
+const PLAN_STATE_ENTRY = "dock_plan_state";
+const MUTATING_TOOLS = new Set(["edit", "write", "bash", "powershell"]);
+
 interface PlanItem {
 	id: string;
 	text: string;
@@ -67,6 +70,25 @@ function clonePlan(plan: PlanState): PlanState {
 	};
 }
 
+/** Move a single step forward when the model forgot to update the plan. */
+function advancePlan(plan: PlanState): PlanState | null {
+	const active = plan.items.findIndex((item) => item.status === "in_progress");
+	if (active === -1) return null;
+	const next = plan.items.findIndex(
+		(item, index) => index > active && item.status === "pending",
+	);
+	// Leave the final step to the model so completion stays explicit.
+	if (next === -1) return null;
+	const items = plan.items.map((item) => ({ ...item }));
+	items[active].status = "done";
+	items[next].status = "in_progress";
+	return {
+		...(plan.title ? { title: plan.title } : {}),
+		items,
+		nextId: plan.nextId,
+	};
+}
+
 function formatPlan(plan: PlanState): string {
 	const lines = plan.title ? [plan.title] : [];
 	for (const item of plan.items) {
@@ -102,10 +124,16 @@ function planFromDetails(details: unknown): PlanState | null {
 
 export default function (pi: ExtensionAPI) {
 	let plan: PlanState = { items: [], nextId: 1 };
+	let planTouchedThisTurn = false;
 
 	const reconstruct = (ctx: ExtensionContext) => {
 		plan = { items: [], nextId: 1 };
 		for (const entry of ctx.sessionManager.getBranch()) {
+			if (entry.type === "custom" && entry.customType === PLAN_STATE_ENTRY) {
+				const restored = planFromDetails(entry.data);
+				if (restored) plan = restored;
+				continue;
+			}
 			if (entry.type !== "message") continue;
 			const message = entry.message;
 			if (message.role !== "toolResult" || message.toolName !== "dock_plan") continue;
@@ -117,16 +145,43 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => reconstruct(ctx));
 	pi.on("session_tree", async (_event, ctx) => reconstruct(ctx));
 
+	pi.on("turn_start", () => {
+		planTouchedThisTurn = false;
+	});
+
+	// Models often leave the first step in_progress while doing later work and
+	// mark everything done at the end. Advance one step per turn that changed
+	// files or ran a command and did not touch the plan, so the panel fills
+	// gradually without advancing on read-only follow-up questions.
+	pi.on("turn_end", (event) => {
+		const touched = planTouchedThisTurn;
+		planTouchedThisTurn = false;
+		if (touched) return;
+		const worked = event.toolResults.some(
+			(result) => MUTATING_TOOLS.has(result.toolName) && !result.isError,
+		);
+		if (!worked) return;
+		const next = advancePlan(plan);
+		if (!next) return;
+		plan = next;
+		pi.appendEntry(PLAN_STATE_ENTRY, clonePlan(plan));
+	});
+
 	pi.registerTool({
 		name: "dock_plan",
 		label: "Plan",
 		description:
-			"Track a multi-step implementation plan. Use it for long tasks with several distinct steps; skip it for short questions or single-step work. Call set with the complete ordered plan to create or reorder it, update to change one item, add to append an item, remove to delete one, and clear when finished. Reuse item ids: mark the current item in_progress and completed items done. Update the plan as work progresses or when the approach changes. Continue the same plan through follow-up or steering messages. When the previous work is complete and a new independent task begins, call set to replace the old plan. Do not clear the plan just because a new user message arrived.",
+			"Track a multi-step implementation plan. For any task with several distinct steps, call set with the COMPLETE ordered plan in one call before editing files or running commands; include every step through final verification, not only the first step. Then keep it current while working: when a step starts mark it in_progress, and as soon as it finishes mark it done and the next step in_progress. Never leave the first step in_progress during later work and never mark several steps done together at the end. Keep exactly one item in_progress. Use update for one item, add only for a genuinely new step discovered later, remove to delete one, and clear when finished. Reuse item ids. Continue the same plan through follow-up or steering messages. When the previous work is complete and a new independent task begins, call set to replace the old plan. Do not clear the plan just because a new user message arrived.",
 		promptSnippet: "Track a multi-step plan and its progress",
+		promptGuidelines: [
+			"Before editing files for a multi-step task, create the complete ordered plan in one dock_plan set call.",
+			"Update dock_plan immediately when a step starts or finishes; never batch completed steps into the final call.",
+		],
 		executionMode: "sequential",
 		parameters: PlanParams,
 
 		async execute(_toolCallId, params) {
+			planTouchedThisTurn = true;
 			const snapshot = () => clonePlan(plan);
 			const fail = (message: string, action: string) => ({
 				content: [{ type: "text" as const, text: `Error: ${message}` }],
@@ -166,6 +221,12 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				case "add": {
+					if (!plan.items.length) {
+						return fail(
+							"Create the complete plan first with action=set, then use add only for a new step",
+							"add",
+						);
+					}
 					if (!params.text?.trim()) return fail("text required for add", "add");
 					const item: PlanItem = {
 						id: `p${plan.nextId++}`,

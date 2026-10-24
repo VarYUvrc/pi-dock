@@ -184,12 +184,26 @@ a:focus-visible {
 }
 
 .project {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
 	font-weight: 650;
 	letter-spacing: -0.01em;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	max-width: 200px;
+}
+
+.project[hidden] {
+	display: none;
+}
+
+.project .icon {
+	width: 13px;
+	height: 13px;
+	color: var(--text-3);
 }
 
 .project:not(:empty) {
@@ -560,6 +574,10 @@ body.resizing-plan * {
 	margin-top: 3px;
 	border: 1.5px solid var(--line-strong);
 	border-radius: 4px;
+	transition:
+		border-color 0.18s ease,
+		background-color 0.18s ease;
+	transition-delay: var(--plan-delay, 0s);
 }
 
 .plan-item.done .plan-box {
@@ -577,6 +595,14 @@ body.resizing-plan * {
 	border: solid #fff;
 	border-width: 0 1.7px 1.7px 0;
 	transform: rotate(45deg);
+	animation: plan-check 0.18s ease-out var(--plan-delay, 0ms) backwards;
+}
+
+@keyframes plan-check {
+	from {
+		transform: rotate(45deg) scale(0.4);
+		opacity: 0;
+	}
 }
 
 .plan-item.done .plan-text {

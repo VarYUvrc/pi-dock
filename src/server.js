@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PiBridge } from "./pi.js";
 import { LiveState } from "./live.js";
-import { PLAN_TOOL, normalizePlan, planFromEntries } from "./plan.js";
+import { PLAN_STATE_ENTRY, PLAN_TOOL, normalizePlan, planFromEntries } from "./plan.js";
 import {
 	deleteSessionFile,
 	listSessions,
@@ -257,6 +257,16 @@ export async function createDock({
 				type: "dock:plan",
 				runtime: runtime.id,
 				plan: normalizePlan(record.message.details),
+			});
+		}
+		if (
+			record.type === "entry_appended" &&
+			record.entry?.customType === PLAN_STATE_ENTRY
+		) {
+			broadcast({
+				type: "dock:plan",
+				runtime: runtime.id,
+				plan: normalizePlan(record.entry.data),
 			});
 		}
 	}
