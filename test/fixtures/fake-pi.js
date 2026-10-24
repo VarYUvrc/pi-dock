@@ -62,6 +62,8 @@ const session = {
 	steering: [],
 	followUp: [],
 	sequence: 0,
+	contextTokens: 1234,
+	contextUnknown: false,
 };
 
 let buffer = "";
@@ -191,6 +193,7 @@ async function streamAssistant(parts, { slow = false } = {}) {
 	const delay = slow ? Math.max(SLOW, 28) : SLOW;
 	session.running = true;
 	session.aborted = false;
+	const calls = [];
 	write({ type: "agent_start" });
 	const started = Date.now();
 	write({ type: "message_start", message: assistant([], "pending") });
@@ -200,6 +203,7 @@ async function streamAssistant(parts, { slow = false } = {}) {
 			write({ type: "message_update", assistantMessageEvent: { type: "thinking_start", contentIndex: index } });
 			for (const delta of chunk(part.text)) {
 				if (session.aborted) break;
+				session.contextTokens += 3;
 				write({
 					type: "message_update",
 					assistantMessageEvent: { type: "thinking_delta", contentIndex: index, delta },
@@ -215,6 +219,7 @@ async function streamAssistant(parts, { slow = false } = {}) {
 			write({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: index } });
 			for (const delta of chunk(part.text)) {
 				if (session.aborted) break;
+				session.contextTokens += 5;
 				write({
 					type: "message_update",
 					assistantMessageEvent: { type: "text_delta", contentIndex: index, delta },
@@ -229,6 +234,7 @@ async function streamAssistant(parts, { slow = false } = {}) {
 		} else if (part.type === "toolCall") {
 			const id = `call_${++session.sequence}`;
 			session.lastToolCall = { id, name: part.name, arguments: part.args };
+			calls.push(session.lastToolCall);
 			write({
 				type: "message_update",
 				assistantMessageEvent: { type: "toolcall_start", contentIndex: index, id, toolName: part.name },
@@ -260,13 +266,13 @@ async function streamAssistant(parts, { slow = false } = {}) {
 	write({ type: "turn_end", message: final, toolResults: [] });
 	write({ type: "agent_end", messages: [final], willRetry: false });
 	session.running = false;
+	session.contextUnknown = false;
 	write({ type: "agent_settled", aborted: session.aborted });
 	session.aborted = false;
-	return { durationMs: Date.now() - started };
+	return { durationMs: Date.now() - started, calls };
 }
 
-async function runTool() {
-	const call = session.lastToolCall;
+async function runTool(call = session.lastToolCall, { isError = false } = {}) {
 	if (!call) return;
 	write({
 		type: "tool_execution_start",
@@ -286,13 +292,17 @@ async function runTool() {
 	const outcome =
 		call.name === "dock_plan"
 			? applyPlan(call.arguments)
-			: { content: [{ type: "text", text: "hi from fake pi\n" }], details: {} };
+			: {
+					content: [{ type: "text", text: isError ? "boom from fake pi\n" : "hi from fake pi\n" }],
+					details: {},
+				};
+	session.contextTokens += 700;
 	write({
 		type: "tool_execution_end",
 		toolCallId: call.id,
 		toolName: call.name,
 		result: outcome,
-		isError: false,
+		isError,
 		durationMs: 41,
 	});
 	const result = {
@@ -301,7 +311,7 @@ async function runTool() {
 		toolName: call.name,
 		content: outcome.content,
 		details: outcome.details,
-		isError: false,
+		isError,
 		timestamp: Date.now(),
 	};
 	write({ type: "message_start", message: { ...result, content: [] } });
@@ -363,6 +373,30 @@ async function prompt(message, images = []) {
 
 	if (message.includes("plan")) {
 		await planPrompt(message);
+		return;
+	}
+
+	if (message.includes("tools")) {
+		const { calls } = await streamAssistant([
+			{ type: "thinking", text: "複数のツールをまとめて実行します。" },
+			{ type: "text", text: "まとめて確認します。" },
+			{ type: "toolCall", name: "bash", args: { command: "echo one" } },
+			{ type: "toolCall", name: "read", args: { path: "src/app.js" } },
+			{ type: "toolCall", name: "grep", args: { pattern: "TODO" } },
+		]);
+		for (const call of calls) await runTool(call);
+		await streamAssistant([{ type: "text", text: "すべて完了しました。" }]);
+		return;
+	}
+
+	if (message.includes("fail")) {
+		const { calls } = await streamAssistant([
+			{ type: "thinking", text: "失敗するツールを試します。" },
+			{ type: "text", text: "ツールを実行します。" },
+			{ type: "toolCall", name: "bash", args: { command: "exit 1" } },
+		]);
+		for (const call of calls) await runTool(call, { isError: true });
+		await streamAssistant([{ type: "text", text: "失敗しました。" }]);
 		return;
 	}
 
@@ -468,11 +502,13 @@ async function handle(record) {
 				totalMessages: session.messages.length,
 				tokens: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, total: 120 },
 				cost: 0.001,
-				contextUsage: {
-					tokens: 1234,
-					contextWindow: session.model.contextWindow,
-					percent: Math.round((1234 / session.model.contextWindow) * 100),
-				},
+				contextUsage: session.contextUnknown
+					? { tokens: null, contextWindow: session.model.contextWindow, percent: null }
+					: {
+							tokens: session.contextTokens,
+							contextWindow: session.model.contextWindow,
+							percent: (session.contextTokens / session.model.contextWindow) * 100,
+						},
 			});
 			return;
 		case "get_available_models":
@@ -596,6 +632,7 @@ async function handle(record) {
 			respond(id, type);
 			return;
 		case "compact":
+			session.contextUnknown = true;
 			respond(id, type, {
 				summary: "compacted",
 				firstKeptEntryId: "x",

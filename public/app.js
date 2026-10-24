@@ -38,6 +38,7 @@ const dom = {
 	thinkingLabel: $("thinkingLabel"),
 	contextButton: $("contextButton"),
 	ringFg: $("ringFg"),
+	ringLimit: $("ringLimit"),
 	newChatButton: $("newChatButton"),
 	historyButton: $("historyButton"),
 	settingsButton: $("settingsButton"),
@@ -64,6 +65,7 @@ const state = {
 	ready: false,
 	connected: false,
 	piDown: "",
+	authError: "",
 	running: false,
 	compacting: false,
 	aborting: false,
@@ -83,6 +85,8 @@ const state = {
 	tools: {},
 	toolRev: {},
 	stats: null,
+	contextUsage: null,
+	compaction: null,
 	sessionState: null,
 	queue: { steering: [], followUp: [] },
 	statuses: {},
@@ -93,6 +97,7 @@ const state = {
 	slash: null,
 	commandMenu: null,
 	sendMode: "steer",
+	planSeen: false,
 };
 
 const openKeys = new Set();
@@ -103,6 +108,10 @@ let stickToBottom = true;
 let liveFrame = 0;
 let messagesFrame = 0;
 let statsTimer = 0;
+let statsPoll = 0;
+let statsInFlight = false;
+let statsQueued = false;
+let statsGeneration = 0;
 let composing = false;
 let compositionEndedAt = Number.NEGATIVE_INFINITY;
 
@@ -155,7 +164,7 @@ async function api(command) {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
-			"x-pi-dock-token": TOKEN,
+			...(TOKEN ? { "x-pi-dock-token": TOKEN } : {}),
 		},
 		body: JSON.stringify(command),
 	});
@@ -170,7 +179,9 @@ async function api(command) {
 }
 
 function connect() {
-	const events = new EventSource(`/api/events?token=${encodeURIComponent(TOKEN)}`);
+	const events = new EventSource(
+		TOKEN ? `/api/events?token=${encodeURIComponent(TOKEN)}` : "/api/events",
+	);
 	events.onopen = () => {
 		const wasDown = !state.connected;
 		state.connected = true;
@@ -194,6 +205,8 @@ function connect() {
 
 async function refreshSnapshot() {
 	const snapshot = await api({ type: "dock:snapshot" });
+	statsGeneration += 1;
+	const sessionChanged = state.sessionId !== (snapshot.state?.sessionId ?? "");
 	state.cwd = snapshot.cwd ?? "";
 	state.sessionState = snapshot.state ?? null;
 	state.model = snapshot.state?.model ?? null;
@@ -204,10 +217,13 @@ async function refreshSnapshot() {
 	state.compacting = Boolean(snapshot.state?.isCompacting);
 	state.messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
 	state.stats = snapshot.stats ?? null;
+	state.contextUsage = snapshot.stats?.contextUsage ?? null;
+	state.compaction = snapshot.compaction ?? null;
 	state.models = snapshot.models ?? [];
 	state.levels = snapshot.levels?.length ? snapshot.levels : ["off"];
 	state.commands = snapshot.commands ?? [];
 	state.plan = snapshot.plan ?? null;
+	if (sessionChanged) state.planSeen = false;
 	state.attachments = [];
 	renderAttachments();
 	state.live = snapshot.live?.blocks?.length
@@ -223,6 +239,7 @@ async function refreshSnapshot() {
 	state.aborting = false;
 	state.ready = true;
 	state.piDown = "";
+	state.authError = "";
 	openKeys.clear();
 	messageNodes.clear();
 	dom.messageList.innerHTML = "";
@@ -245,8 +262,10 @@ function handleRecord(record) {
 			state.piDown = record.reason ?? "Pi との接続が切れました";
 			state.running = false;
 			state.compacting = false;
+			state.contextUsage = null;
 			state.live = null;
 			state.aborting = false;
+			stopStatsPolling();
 			renderChrome();
 			renderLive();
 			renderRunStatus();
@@ -261,6 +280,7 @@ function handleRecord(record) {
 			state.retry = null;
 			state.sendMode = "steer";
 			state.live = { blocks: [], tools: state.tools };
+			startStatsPolling();
 			renderChrome();
 			scheduleLive();
 			return;
@@ -274,6 +294,7 @@ function handleRecord(record) {
 			state.live = null;
 			state.tools = {};
 			state.toolRev = {};
+			stopStatsPolling();
 			renderChrome();
 			scheduleLive();
 			renderMessages();
@@ -310,15 +331,22 @@ function handleRecord(record) {
 			return;
 		case "compaction_start":
 			state.compacting = true;
+			state.contextUsage = null;
+			startStatsPolling();
+			renderChrome();
 			renderRunStatus();
 			return;
 		case "compaction_end":
 			state.compacting = false;
+			state.contextUsage = null;
+			renderChrome();
 			renderRunStatus();
-			scheduleStats();
+			if (state.running || state.retry) scheduleStats(0);
+			else stopStatsPolling();
 			return;
 		case "auto_retry_start":
 			state.retry = { attempt: record.attempt, maxAttempts: record.maxAttempts };
+			startStatsPolling();
 			renderRunStatus();
 			return;
 		case "auto_retry_end":
@@ -460,16 +488,19 @@ function onToolEvent(record) {
 			args: record.args,
 			status: "running",
 			output: "",
+			startedAt: Date.now(),
 		};
 	} else if (record.type === "tool_execution_update") {
 		if (existing) existing.output = toolText(record.partialResult);
 	} else {
-		const tool = existing ?? { id, name: record.toolName, args: record.args };
+		const tool = existing ?? { id, name: record.toolName, args: record.args, startedAt: Date.now() };
 		tool.status = record.isError ? "error" : "done";
 		tool.isError = Boolean(record.isError);
 		tool.output = toolText(record.result) || tool.output || "";
-		tool.durationMs = record.durationMs;
+		tool.durationMs = record.durationMs ?? (tool.startedAt ? Date.now() - tool.startedAt : undefined);
 		state.tools[id] = tool;
+		startStatsPolling();
+		scheduleStats(900);
 	}
 	state.toolRev[id] = (state.toolRev[id] ?? 0) + 1;
 	scheduleLive();
@@ -796,17 +827,46 @@ async function setThinkingLevel(level) {
 	}
 }
 
-function scheduleStats() {
+function scheduleStats(delay = 250) {
 	clearTimeout(statsTimer);
-	statsTimer = setTimeout(() => {
-		api({ type: "get_session_stats" })
-			.then((stats) => {
-				state.stats = stats;
-				renderChrome();
-				if (state.menu === "context") renderContextMenu();
-			})
-			.catch(() => {});
-	}, 250);
+	statsTimer = setTimeout(fetchStats, delay);
+}
+
+async function fetchStats() {
+	if (statsInFlight) {
+		statsQueued = true;
+		return;
+	}
+	statsInFlight = true;
+	const generation = statsGeneration;
+	try {
+		const stats = await api({ type: "get_session_stats" });
+		if (generation !== statsGeneration) return;
+		state.stats = stats;
+		state.contextUsage = stats?.contextUsage ?? null;
+		renderChrome();
+		if (state.menu === "context") renderContextMenu();
+	} catch {
+		/* keep the last known value; never invent usage */
+	} finally {
+		statsInFlight = false;
+		if (statsQueued) {
+			statsQueued = false;
+			scheduleStats(150);
+		}
+	}
+}
+
+function startStatsPolling() {
+	if (statsPoll) return;
+	statsPoll = setInterval(() => scheduleStats(0), 1500);
+}
+
+function stopStatsPolling() {
+	if (!statsPoll) return;
+	clearInterval(statsPoll);
+	statsPoll = 0;
+	scheduleStats(0);
 }
 
 /* --------------------------------------------------------------- composer */
@@ -1499,17 +1559,39 @@ function renderSettingsMenu() {
 }
 
 function renderContextMenu() {
-	const usage = state.stats?.contextUsage;
-	const tokens = usage?.tokens ?? 0;
-	const windowSize = usage?.contextWindow ?? state.model?.contextWindow ?? 0;
-	const percent = typeof usage?.percent === "number" ? Math.round(usage.percent) : null;
+	const usage = state.contextUsage;
+	const tokens = Number.isFinite(usage?.tokens) ? usage.tokens : null;
+	const windowSize =
+		numberOrNull(usage?.contextWindow) ?? numberOrNull(state.model?.contextWindow) ?? 0;
+	const percent = Number.isFinite(usage?.percent) ? Math.round(usage.percent) : null;
 	const cost = typeof state.stats?.cost === "number" ? state.stats.cost : null;
+	const compaction = state.compaction;
+	const thresholdPercent = Number.isFinite(compaction?.thresholdPercent)
+		? Math.round(compaction.thresholdPercent)
+		: null;
+	const thresholdTokens = Number.isFinite(compaction?.thresholdTokens)
+		? Math.round(compaction.thresholdTokens)
+		: null;
 	const rows = [
-		["コンテキスト", percent === null ? "—" : `${percent}%`],
-		["トークン", windowSize ? `${tokens.toLocaleString()} / ${windowSize.toLocaleString()}` : tokens.toLocaleString()],
+		["コンテキスト", percent === null ? "不明" : `${percent}%`],
+		[
+			"トークン",
+			tokens === null
+				? "不明"
+				: `${tokens.toLocaleString()}${windowSize ? ` / ${windowSize.toLocaleString()}` : ""}`,
+		],
 		["メッセージ", String(state.stats?.totalMessages ?? state.messages.length)],
 	];
 	if (cost) rows.push(["コスト", `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`]);
+	const compactionValue = !compaction
+		? "—"
+		: !compaction.enabled
+			? "無効"
+			: thresholdPercent === null
+				? "既定"
+				: `${thresholdPercent}%`;
+	rows.push(["自動圧縮", compactionValue]);
+	const pressed = (value) => thresholdPercent !== null && thresholdPercent === value;
 	dom.contextMenu.innerHTML =
 		rows
 			.map(
@@ -1517,9 +1599,29 @@ function renderContextMenu() {
 					`<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`,
 			)
 			.join("") +
+		`<div class="setting-row compaction-row">
+			<span>自動圧縮</span>
+			<button type="button" class="switch" role="switch" aria-checked="${Boolean(
+				compaction?.enabled,
+			)}" aria-label="自動圧縮" data-compaction-toggle data-testid="compaction-toggle"></button>
+		</div>
+		<div class="compaction-actions" role="group" aria-label="自動圧縮のしきい値">
+			<button type="button" data-compaction-percent="25" aria-pressed="${pressed(25)}" data-testid="compaction-25">25%</button>
+			<button type="button" data-compaction-percent="50" aria-pressed="${pressed(50)}" data-testid="compaction-50">50%</button>
+			<button type="button" data-compaction-clear data-testid="compaction-default">既定</button>
+		</div>
+		<div class="hint">${escapeHtml(
+			thresholdTokens === null
+				? "このモデルのコンテキスト長が不明です"
+				: `約 ${thresholdTokens.toLocaleString()} トークンで自動圧縮`,
+		)}</div>` +
 		`<div class="menu-foot"><button type="button" class="menu-item" data-action="compact" data-testid="compact-button"${
 			state.running ? " disabled" : ""
 		}><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg><span class="label">コンテキストを圧縮</span></button></div>`;
+}
+
+function numberOrNull(value) {
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 dom.modelMenu.addEventListener("click", (event) => {
@@ -1558,6 +1660,47 @@ dom.settingsMenu.addEventListener("click", (event) => {
 });
 
 dom.contextMenu.addEventListener("click", async (event) => {
+	const percentButton = event.target.closest("[data-compaction-percent]");
+	if (percentButton) {
+		try {
+			const result = await api({
+				type: "dock:set_compaction",
+				percent: Number(percentButton.dataset.compactionPercent),
+			});
+			if (result?.compaction) state.compaction = result.compaction;
+			renderChrome();
+			renderContextMenu();
+			toast(`自動圧縮を ${percentButton.dataset.compactionPercent}% に設定しました`);
+		} catch (error) {
+			toast(error.message, "error");
+		}
+		return;
+	}
+	if (event.target.closest("[data-compaction-clear]")) {
+		try {
+			const result = await api({ type: "dock:set_compaction", action: "clear" });
+			if (result?.compaction) state.compaction = result.compaction;
+			renderChrome();
+			renderContextMenu();
+			toast("自動圧縮を既定に戻しました");
+		} catch (error) {
+			toast(error.message, "error");
+		}
+		return;
+	}
+	const toggle = event.target.closest("[data-compaction-toggle]");
+	if (toggle) {
+		const enabled = toggle.getAttribute("aria-checked") !== "true";
+		try {
+			await api({ type: "dock:set_compaction", action: "enable", enabled });
+			if (state.compaction) state.compaction.enabled = enabled;
+			renderChrome();
+			renderContextMenu();
+		} catch (error) {
+			toast(error.message, "error");
+		}
+		return;
+	}
 	if (!event.target.closest('[data-action="compact"]')) return;
 	closeMenus();
 	try {
@@ -1675,9 +1818,14 @@ function renderPlan() {
 	const items = Array.isArray(plan?.items) ? plan.items : [];
 	dom.planPanel.hidden = items.length === 0;
 	if (!items.length) {
+		state.planSeen = false;
 		dom.planCurrent.textContent = "";
 		dom.planItems.replaceChildren();
 		return;
+	}
+	if (!state.planSeen) {
+		state.planSeen = true;
+		dom.planPanel.open = true;
 	}
 	dom.planTitle.textContent = plan.title || "計画";
 	const current = items.find((item) => item.status === "in_progress");
@@ -1719,7 +1867,7 @@ function messageRevision(message, ctx) {
 					})
 					.join("|")
 			: "0";
-		return `a:${blocks}:${message.stopReason}:${message.errorMessage ?? ""}`;
+		return `a:${blocks}:${message.stopReason}:${message.errorMessage ?? ""}:${state.running ? "r" : "d"}`;
 	}
 	if (message.role === "toolResult") {
 		return `r:${message.toolCallId}:${textOfContent(message.content).length}:${message.isError}`;
@@ -1824,7 +1972,7 @@ function renderAssistant(message, index, ctx, live) {
 	node.className = `assistant${live ? " live" : ""}`;
 	node.dataset.testid = live ? "message-live" : "message-assistant";
 	const blocks = Array.isArray(message.content) ? message.content : [];
-	node.innerHTML = renderBlocks(blocks, `m${index}`, ctx);
+	node.innerHTML = renderBlocks(blocks, `m${index}`, ctx, { live });
 	if (message.stopReason === "aborted") {
 		node.append(note("中断されました"));
 	} else if (message.stopReason === "error") {
@@ -1860,24 +2008,30 @@ function renderSummaryNote(summary, label, index) {
 	return wrap;
 }
 
-function renderBlocks(blocks, prefix, ctx) {
+function renderBlocks(blocks, prefix, ctx, { live = false } = {}) {
 	const parts = [];
+	let work = null;
+	const flush = () => {
+		if (!work) return;
+		parts.push(workMarkup(work.items, `${prefix}:w${work.start}`, prefix));
+		work = null;
+	};
 	blocks.forEach((block, index) => {
 		if (!block) return;
 		if (block.type === "text") {
 			if (!block.text) return;
+			flush();
 			parts.push(`<div class="md">${renderMarkdown(block.text)}</div>`);
 			return;
 		}
 		if (block.type === "thinking") {
 			if (!block.thinking) return;
-			const key = `${prefix}:t${index}`;
-			parts.push(
-				`<details class="thinking" data-key="${key}"${openKeys.has(key) ? " open" : ""} data-testid="thinking">
-					<summary><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg><span>思考</span><svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
-					<div class="thinking-text">${escapeHtml(block.thinking)}</div>
-				</details>`,
-			);
+			if (!work) work = { start: index, items: [] };
+			work.items.push({
+				kind: "thinking",
+				status: live ? "running" : "done",
+				text: block.thinking,
+			});
 			return;
 		}
 		if (block.type === "toolCall") {
@@ -1891,23 +2045,81 @@ function renderBlocks(blocks, prefix, ctx) {
 				if (result) status = result.isError ? "error" : "done";
 				else status = state.running ? "running" : "done";
 			}
-			parts.push(
-				toolCardMarkup(
-					{
-						id: block.id,
-						name: block.name ?? tool?.name,
-						arguments: args,
-						output,
-						status,
-						durationMs: tool?.durationMs,
-					},
-					prefix,
-					"tool",
-				),
-			);
+			if (!work) work = { start: index, items: [] };
+			work.items.push({
+				kind: "tool",
+				status,
+				tool: {
+					id: block.id,
+					name: block.name ?? tool?.name,
+					arguments: args,
+					output,
+					status,
+					durationMs: tool?.durationMs,
+				},
+			});
 		}
 	});
+	flush();
 	return parts.join("");
+}
+
+function workStatus(items) {
+	if (items.some((item) => item.status === "error")) return "error";
+	if (items.some((item) => item.status === "running")) return "running";
+	return "done";
+}
+
+function workMarkup(items, key, prefix) {
+	const status = workStatus(items);
+	const onlyThinking = items.every((item) => item.kind === "thinking");
+	const label =
+		status === "error"
+			? "エラー"
+			: onlyThinking
+				? status === "running"
+					? "思考中"
+					: "思考"
+				: status === "running"
+					? "作業中"
+					: "作業";
+	const statuses = items.map((item) => item.status);
+	const shown = statuses.slice(0, 8);
+	if (statuses.length > 8 && status === "error" && !shown.includes("error")) shown[7] = "error";
+	const rail = shown
+		.map((value) => `<i class="work-dot ${value}"></i>`)
+		.join("");
+	const duration = items.reduce(
+		(sum, item) => sum + (Number.isFinite(item.tool?.durationMs) ? item.tool.durationMs : 0),
+		0,
+	);
+	const meta = status === "running" || !duration ? "" : formatDuration(duration);
+	const body = items
+		.map((item) => {
+			if (item.kind === "thinking") {
+				return `<div class="work-thinking">
+					<div class="work-item-head"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg><span>思考</span></div>
+					<div class="thinking-text">${escapeHtml(item.text)}</div>
+				</div>`;
+			}
+			return toolCardMarkup(item.tool, prefix, "tool");
+		})
+		.join("");
+	return `<details class="work${status === "error" ? " error" : ""}" data-key="${escapeHtml(
+		key,
+	)}" data-status="${status}" data-testid="work-group"${
+		openKeys.has(key) ? " open" : ""
+	}>
+		<summary>
+			<span class="work-label">${label}</span>
+			<span class="work-rail" aria-hidden="true">${rail}</span>
+			<span class="work-count" title="内部処理 ${items.length} 件">${items.length}</span>
+			${meta ? `<span class="work-meta">${escapeHtml(meta)}</span>` : ""}
+			${status === "error" ? '<svg class="icon work-alert" aria-hidden="true"><use href="#i-alert"/></svg>' : ""}
+			<svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg>
+		</summary>
+		<div class="work-body">${body}</div>
+	</details>`;
 }
 
 function parseArgs(text) {
@@ -1952,6 +2164,18 @@ function toolCardMarkup(tool, prefix, testId = "tool") {
 	const output = (tool.output ?? "").replace(/\s+$/, "");
 	const clipped = output.length > MAX_TOOL_OUTPUT ? `${output.slice(0, MAX_TOOL_OUTPUT)}
 …` : output;
+	let argsText = "";
+	try {
+		if (tool.arguments && (typeof tool.arguments !== "object" || Object.keys(tool.arguments).length)) {
+			argsText =
+				typeof tool.arguments === "string"
+					? tool.arguments
+					: JSON.stringify(tool.arguments, null, 2);
+		}
+	} catch {
+		argsText = "";
+	}
+	if (argsText.length > 4000) argsText = `${argsText.slice(0, 4000)}\n…`;
 	const status = tool.status ?? "done";
 	const meta = formatDuration(tool.durationMs);
 	return `<details class="tool${status === "error" ? " error" : ""}" data-key="${escapeHtml(key)}"${
@@ -1965,9 +2189,10 @@ function toolCardMarkup(tool, prefix, testId = "tool") {
 			${meta ? `<span class="tool-meta">${escapeHtml(meta)}</span>` : ""}
 			<svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg>
 		</summary>
-		<div class="tool-body">${
-			clipped ? `<pre>${escapeHtml(clipped)}</pre>` : '<div class="note">出力なし</div>'
-		}</div>
+		<div class="tool-body">
+			${argsText ? `<div class="tool-args"><span>引数</span><pre>${escapeHtml(argsText)}</pre></div>` : ""}
+			${clipped ? `<pre>${escapeHtml(clipped)}</pre>` : '<div class="note">出力なし</div>'}
+		</div>
 	</details>`;
 }
 
@@ -1999,7 +2224,7 @@ function renderLive() {
 	const node = document.createElement("div");
 	node.className = "assistant live";
 	node.dataset.testid = "message-live";
-	node.innerHTML = renderBlocks(blocks, "live", ctx);
+	node.innerHTML = renderBlocks(blocks, "live", ctx, { live: true });
 	dom.liveMount.replaceChildren(node);
 	dom.empty.hidden = true;
 	if (stickToBottom) scrollToBottom();
@@ -2033,15 +2258,49 @@ function renderChrome() {
 	dom.thinkingLabel.textContent = state.thinkingLevel;
 	dom.thinkingButton.title = `思考レベル: ${state.thinkingLevel}`;
 
-	const usage = state.stats?.contextUsage;
-	const percent = typeof usage?.percent === "number" ? Math.max(0, Math.min(100, usage.percent)) : 0;
+	const usage = state.contextUsage;
+	const known =
+		Number.isFinite(usage?.percent) && Number.isFinite(usage?.tokens) && usage.percent !== null;
+	const percent = known ? Math.max(0, Math.min(100, usage.percent)) : null;
 	const circumference = 47.12;
-	dom.ringFg.setAttribute("stroke-dashoffset", String(circumference * (1 - percent / 100)));
-	dom.contextButton.classList.toggle("warn", percent >= 80 && percent < 95);
-	dom.contextButton.classList.toggle("danger", percent >= 95);
-	dom.contextButton.title = usage
-		? `コンテキスト ${Math.round(percent)}% (${(usage.tokens ?? 0).toLocaleString()} / ${(usage.contextWindow ?? 0).toLocaleString()})`
-		: "コンテキスト";
+	const limit =
+		state.compaction?.enabled && Number.isFinite(state.compaction?.thresholdPercent)
+			? Math.max(0, Math.min(100, state.compaction.thresholdPercent))
+			: null;
+	dom.ringFg.setAttribute(
+		"stroke-dashoffset",
+		percent === null ? String(circumference) : String(circumference * (1 - percent / 100)),
+	);
+	dom.contextButton.classList.toggle("unknown", percent === null);
+	if (limit === null) {
+		dom.ringLimit.setAttribute("visibility", "hidden");
+	} else {
+		dom.ringLimit.setAttribute("visibility", "visible");
+		dom.ringLimit.setAttribute("stroke-dashoffset", String(-circumference * (limit / 100)));
+	}
+	const warnAt = limit === null ? 80 : Math.max(1, limit * 0.85);
+	const dangerAt = limit === null ? 95 : limit;
+	dom.contextButton.classList.toggle(
+		"warn",
+		percent !== null && percent >= warnAt && percent < dangerAt,
+	);
+	dom.contextButton.classList.toggle("danger", percent !== null && percent >= dangerAt);
+	const title = [];
+	if (known) {
+		title.push(
+			`コンテキスト ${Math.round(percent)}% (${(usage.tokens ?? 0).toLocaleString()} / ${(usage.contextWindow ?? 0).toLocaleString()})`,
+		);
+	} else {
+		title.push("コンテキスト 不明");
+	}
+	if (limit !== null) {
+		title.push(
+			`自動圧縮 ${Math.round(limit)}% (${Math.round(state.compaction.thresholdTokens ?? 0).toLocaleString()})`,
+		);
+	} else if (state.compaction && !state.compaction.enabled) {
+		title.push("自動圧縮 無効");
+	}
+	dom.contextButton.title = title.join(" · ");
 
 	updateSendButton();
 	renderSendMode();
@@ -2072,7 +2331,9 @@ function renderWidgets() {
 }
 
 function renderBanner() {
-	if (state.piDown) {
+	if (state.authError) {
+		showBanner(state.authError, null);
+	} else if (state.piDown) {
 		showBanner(state.piDown, { label: "再起動", action: restartPi });
 	} else if (!state.ready) {
 		showBanner("Pi に接続しています…", null);
@@ -2205,10 +2466,6 @@ async function boot() {
 	renderPlan();
 	renderRunStatus();
 	autosize();
-	if (!TOKEN) {
-		showBanner("URL にトークンがありません。起動時に表示された URL を開いてください。", null);
-		return;
-	}
 
 	document.addEventListener("keydown", (event) => {
 		if (event.key !== "/" || state.dialogs.length) return;
@@ -2227,7 +2484,17 @@ async function boot() {
 		await refreshSnapshot();
 	} catch (error) {
 		state.ready = false;
-		showBanner(`Pi に接続できません: ${error.message}`, { label: "再試行", action: () => bootRefresh() });
+		const unauthorized = /unauthorized/i.test(error.message);
+		if (unauthorized) {
+			state.authError =
+				"このページは起動用 URL から開く必要があります。ターミナルに表示された URL を開いてください。";
+			showBanner(state.authError, null);
+		} else {
+			showBanner(`Pi に接続できません: ${error.message}`, {
+				label: "再試行",
+				action: () => bootRefresh(),
+			});
+		}
 	}
 	dom.input.focus();
 }

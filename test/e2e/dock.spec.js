@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { join } from "node:path";
 import { setupWorkspace, startDock, stopDock } from "./harness.js";
@@ -41,8 +41,24 @@ test("loads the shell and enforces the token", async () => {
 	await expect(page.locator("#composer")).toBeVisible();
 	await expect(page.getByTestId("message-user")).toHaveCount(0);
 
-	const bare = await page.request.get(`http://127.0.0.1:${dock.port}/`);
-	expect(bare.status()).toBe(401);
+	// The launch credential is exchanged for a cookie and the address bar is clean.
+	expect(new URL(page.url()).search).toBe("");
+	expect(new URL(page.url()).pathname).toBe("/");
+
+	const bareStatus = await new Promise((resolve, reject) => {
+		const request = httpRequest(
+			`http://127.0.0.1:${dock.port}/`,
+			{ headers: { host: `127.0.0.1:${dock.port}` } },
+			(response) => {
+				response.resume();
+				resolve(response.statusCode);
+			},
+		);
+		request.on("error", reject);
+		request.end();
+	});
+	expect(bareStatus).toBe(401);
+	await page.context().clearCookies();
 	const brokenToken = await page.request.get(
 		`http://127.0.0.1:${dock.port}/api/events?token=wrong`,
 	);
@@ -59,17 +75,29 @@ test("streams a reply with thinking, tools, markdown and copy", async () => {
 	});
 	await expectDone();
 
-	// reasoning is collapsed by default
-	const thinking = page.locator('details[data-testid="thinking"]').first();
-	await expect(thinking).toBeVisible();
-	expect(await thinking.evaluate((node) => node.open)).toBe(false);
-	await thinking.locator("summary").click();
-	await expect(thinking).toContainText("必要なツール");
+	// Thinking and tool work are separate compact cards because the assistant
+	// text between them is always visible.
+	const groups = page.getByTestId("work-group");
+	await expect(groups).toHaveCount(2);
+	const reasoning = groups.first();
+	await expect(reasoning).toHaveAttribute("data-status", "done");
+	expect(await reasoning.evaluate((node) => node.open)).toBe(false);
+	await reasoning.locator("summary").first().click();
+	await expect(reasoning).toContainText("必要なツール");
 
-	// tool cards are collapsed by default and expand to their output
-	const tool = page.locator('details[data-testid="tool"]').first();
+	const work = groups.last();
+	await expect(work).toHaveAttribute("data-status", "done");
+	expect(await work.evaluate((node) => node.open)).toBe(false);
+	await expect(work.locator(".work-dot.done")).toHaveCount(1);
+	await expect(work.locator(".work-count")).toHaveText("1");
+	await work.locator("summary").first().click();
+
+	// Nested tool cards stay individually expandable with arguments and output.
+	const tool = work.locator('details[data-testid="tool"]').first();
 	expect(await tool.evaluate((node) => node.open)).toBe(false);
 	await tool.locator("summary").click();
+	await expect(tool).toContainText("引数");
+	await expect(tool).toContainText("echo hi");
 	await expect(tool).toContainText("hi from fake pi");
 	await expect(tool.locator(".dot")).toHaveClass(/done/);
 
@@ -83,6 +111,87 @@ test("streams a reply with thinking, tools, markdown and copy", async () => {
 	expect(clipboard).toBe("const answer = 42;");
 	const ring = await page.locator("#contextButton").getAttribute("title");
 	expect(ring).toContain("コンテキスト");
+});
+
+test("groups multiple tools into a stable work rail and keeps failures visible", async () => {
+	await send("tools");
+	await expect(page.getByTestId("message-assistant").last()).toContainText("すべて完了しました。", {
+		timeout: 10_000,
+	});
+	await expectDone();
+
+	const groups = page.getByTestId("work-group");
+	await expect(groups).toHaveCount(2);
+	const work = groups.last();
+	await expect(work).toHaveAttribute("data-status", "done");
+	await expect(work.locator(".work-count")).toHaveText("3");
+	await expect(work.locator(".work-dot.done")).toHaveCount(3);
+	const railWidth = await work
+		.locator(".work-rail")
+		.evaluate((node) => node.getBoundingClientRect().width);
+	expect(railWidth).toBeGreaterThan(0);
+	await work.locator("summary").first().click();
+	await expect(work.getByTestId("tool")).toHaveCount(3);
+	await expect(work.getByTestId("tool").first()).toContainText("echo one");
+
+	await send("fail");
+	await expect(page.getByTestId("message-assistant").last()).toContainText("失敗しました。", {
+		timeout: 10_000,
+	});
+	await expectDone();
+	const failed = page.getByTestId("work-group").last();
+	await expect(failed).toHaveAttribute("data-status", "error");
+	await expect(failed).toContainText("エラー");
+	await expect(failed.locator(".work-rail .work-dot.error")).toHaveCount(1);
+	await expect(failed.locator(".work-alert")).toBeVisible();
+	expect(await failed.evaluate((node) => node.open)).toBe(false);
+	await failed.locator("summary").first().click();
+	await expect(failed.getByTestId("tool").first()).toContainText("exit 1");
+});
+
+test("refreshes the context ring while a response is streaming", async () => {
+	const button = page.locator("#contextButton");
+	const before = await button.getAttribute("title");
+	await send("long please");
+	await expect(page.getByTestId("message-live")).toContainText("chunk 2");
+	await expect.poll(() => button.getAttribute("title"), { timeout: 10_000 }).not.toBe(before);
+	await expectDone();
+	expect(await button.getAttribute("title")).toContain("コンテキスト");
+});
+
+test("sets per-model compaction in Pi settings without losing other settings", async () => {
+	const settingsFile = join(workspace.agent, "settings.json");
+	await writeFile(
+		settingsFile,
+		`${JSON.stringify(
+			{ theme: "dark", compaction: { keepRecentTokens: 12_345 } },
+			null,
+			2,
+		)}\n`,
+	);
+	await page.reload();
+	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+	await page.locator("#contextButton").click();
+	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
+	await page.getByTestId("compaction-25").click();
+	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "true");
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /自動圧縮 25%/);
+
+	let saved = JSON.parse(await readFile(settingsFile, "utf8"));
+	expect(saved.theme).toBe("dark");
+	expect(saved.compaction.keepRecentTokens).toBe(12_345);
+	expect(saved.compaction.modelOverrides["fake/fake-fast"].reserveTokens).toBe(24_000);
+
+	await page.getByTestId("compaction-toggle").click();
+	await expect(page.getByTestId("compaction-toggle")).toHaveAttribute("aria-checked", "false");
+	saved = JSON.parse(await readFile(settingsFile, "utf8"));
+	expect(saved.compaction.enabled).toBe(false);
+
+	await page.getByTestId("compaction-default").click();
+	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
+	saved = JSON.parse(await readFile(settingsFile, "utf8"));
+	expect(saved.compaction.modelOverrides).toBeUndefined();
+	expect(saved.compaction.keepRecentTokens).toBe(12_345);
 });
 
 test("Enter inserts a newline and never sends", async () => {
@@ -320,8 +429,10 @@ test("shows, advances and clears the agent plan", async () => {
 	await expect(page.locator("#planPanel")).toBeHidden();
 	await send("plan start");
 	await expect(page.locator("#planPanel")).toBeVisible();
+	await expect(page.locator("#planPanel")).toHaveAttribute("open", "");
 	await expect(page.locator("#planTitle")).toHaveText("実装計画");
 	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await expect(page.getByTestId("plan-item").first()).toBeVisible();
 	await expect(
 		page.getByTestId("plan-item").filter({ hasText: "RPCの確認" }),
 	).toHaveAttribute("data-status", "done");
@@ -520,6 +631,15 @@ test("compacts the context from the menu", async () => {
 	await page.getByTestId("compact-button").click();
 	await expect(page.getByTestId("toast").filter({ hasText: "圧縮しました" })).toBeVisible();
 	await expect(page.locator("#contextMenu")).toBeHidden();
+	// Directly after compaction Pi may have no valid context estimate yet.
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /不明/);
+	await expect(page.locator("#ringFg")).toHaveAttribute("stroke-dashoffset", "47.12");
+
+	await send("hello");
+	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
+		timeout: 10_000,
+	});
+	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /不明/);
 });
 
 test("restarts Pi after it exits", async () => {
@@ -535,6 +655,7 @@ test("restarts Pi after it exits", async () => {
 
 test("blocks cross-origin and bad-host requests", async () => {
 	const base = `http://127.0.0.1:${dock.port}`;
+	await page.context().clearCookies();
 	const noOrigin = await page.request.post(`${base}/api/rpc`, {
 		data: { type: "dock:snapshot" },
 		headers: { "content-type": "application/json" },

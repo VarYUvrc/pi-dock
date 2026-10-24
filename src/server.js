@@ -7,6 +7,12 @@ import { PiBridge } from "./pi.js";
 import { LiveState } from "./live.js";
 import { PLAN_TOOL, normalizePlan, planFromEntries } from "./plan.js";
 import { listSessions } from "./sessions.js";
+import {
+	clearCompactionThreshold,
+	describeCompaction,
+	setCompactionEnabled,
+	setCompactionThreshold,
+} from "./compaction.js";
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const PLAN_EXTENSION = join(
@@ -174,6 +180,7 @@ export async function createDock({
 			bridge.request({ type: "get_entries" }).catch(() => null),
 		]);
 		if (state?.sessionName !== undefined) sessionName = state.sessionName;
+		const compaction = await describeCompaction({ cwd, env, model: state?.model });
 		return {
 			cwd,
 			state,
@@ -184,7 +191,14 @@ export async function createDock({
 			levels: levels?.levels ?? ["off"],
 			commands: commands?.commands ?? [],
 			plan: entries ? planFromEntries(entries.entries, entries.leafId) : null,
+			compaction,
 		};
+	}
+
+	async function currentModel() {
+		const state = await bridge.request({ type: "get_state" });
+		if (!state?.model) throw new Error("モデルが選択されていません");
+		return state.model;
 	}
 
 	async function handleRpc(command) {
@@ -202,6 +216,22 @@ export async function createDock({
 			await waitForPi(bridge);
 			live.reset();
 			return { restarted: true };
+		}
+		if (command.type === "dock:set_compaction") {
+			const model = await currentModel();
+			if (command.action === "enable") {
+				await setCompactionEnabled({ env, enabled: command.enabled !== false });
+			} else if (command.action === "clear") {
+				await clearCompactionThreshold({ cwd, env, model });
+			} else {
+				await setCompactionThreshold({
+					cwd,
+					env,
+					model,
+					percent: Number(command.percent),
+				});
+			}
+			return { compaction: await describeCompaction({ cwd, env, model }) };
 		}
 		if (command.type === "dock:extension_ui_response") {
 			if (typeof command.id !== "string") throw new Error("id が不正です");
@@ -256,10 +286,29 @@ export async function createDock({
 		});
 	}
 
+	function cookieToken(request) {
+		const header = request.headers.cookie;
+		if (typeof header !== "string") return null;
+		for (const part of header.split(";")) {
+			const separator = part.indexOf("=");
+			if (separator === -1) continue;
+			if (part.slice(0, separator).trim() !== "pi_dock") continue;
+			try {
+				return decodeURIComponent(part.slice(separator + 1).trim());
+			} catch {
+				return null;
+			}
+		}
+		return null;
+	}
+
 	function authorized(request, url) {
 		const header = request.headers["x-pi-dock-token"];
 		if (typeof header === "string" && header === token) return true;
-		return url.searchParams.get("token") === token;
+		if (cookieToken(request) === token) return true;
+		return (
+			url.searchParams.get("launch") === token || url.searchParams.get("token") === token
+		);
 	}
 
 	function hostAllowed(request) {
@@ -305,6 +354,28 @@ export async function createDock({
 		if (!hostAllowed(request)) {
 			response.writeHead(421, { "content-type": "text/plain; charset=utf-8" });
 			response.end("Misdirected request");
+			return;
+		}
+
+		if (
+			request.method === "GET" &&
+			url.pathname === "/" &&
+			(url.searchParams.has("launch") || url.searchParams.has("token"))
+		) {
+			if (!authorized(request, url)) {
+				response.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
+				response.end("Unauthorized — open the URL printed by pi-dock");
+				return;
+			}
+			// Exchange the launch credential for a localhost cookie and redirect to
+			// a clean address. The credential itself stays as strong as before.
+			response.writeHead(303, {
+				location: "/",
+				"set-cookie": `pi_dock=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`,
+				"cache-control": "no-store",
+				"referrer-policy": "no-referrer",
+			});
+			response.end();
 			return;
 		}
 
@@ -416,7 +487,7 @@ export async function createDock({
 		server,
 		token,
 		port: actualPort,
-		url: `http://${host}:${actualPort}/?token=${encodeURIComponent(token)}`,
+		url: `http://${host}:${actualPort}/?launch=${encodeURIComponent(token)}`,
 		get sessionName() {
 			return sessionName;
 		},

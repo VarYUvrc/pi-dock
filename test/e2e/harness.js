@@ -130,7 +130,7 @@ export async function startDock(workspace, extraEnv = {}) {
 		let output = "";
 		child.stdout.on("data", (chunk) => {
 			output += chunk;
-			const match = /(http:\/\/127\.0\.0\.1:\d+\/\?token=\S+)/.exec(output);
+			const match = /(http:\/\/127\.0\.0\.1:\d+\/\?launch=\S+)/.exec(output);
 			if (match) {
 				clearTimeout(timer);
 				resolve(match[1]);
@@ -146,7 +146,7 @@ export async function startDock(workspace, extraEnv = {}) {
 		child,
 		url,
 		port,
-		token: new URL(url).searchParams.get("token"),
+		token: new URL(url).searchParams.get("launch"),
 		stderr: () => stderr,
 	};
 }
