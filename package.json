@@ -1,0 +1,36 @@
+{
+	"name": "pi-dock",
+	"version": "0.1.0",
+	"private": true,
+	"description": "A thin local web UI for the Pi coding agent",
+	"type": "module",
+	"bin": {
+		"pi-dock": "bin/pi-dock.js"
+	},
+	"files": [
+		"bin",
+		"src",
+		"public",
+		"scripts",
+		"README.md",
+		"LICENSE"
+	],
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"start": "node bin/pi-dock.js",
+		"test": "playwright test",
+		"smoke": "node scripts/smoke-real.mjs"
+	},
+	"devDependencies": {
+		"@playwright/test": "1.48.1"
+	},
+	"keywords": [
+		"pi",
+		"coding-agent",
+		"web-ui",
+		"local-first"
+	],
+	"license": "MIT"
+}
