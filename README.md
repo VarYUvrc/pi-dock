@@ -90,6 +90,8 @@ pi-dock --cwd C:\path\to\project
 ```bash
 npm install
 npm test          # Playwright E2E（実際の Pi の代わりに RPC フィクスチャを使用）
+npm run lint      # Biome で JS/TS/CSS/JSON を静的検査
+npm run format    # Biome で整形（任意）
 npm start -- --cwd <path>
 ```
 

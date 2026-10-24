@@ -22,9 +22,13 @@
 	"scripts": {
 		"start": "node bin/pi-dock.js",
 		"test": "playwright test",
-		"smoke": "node scripts/smoke-real.mjs"
+		"smoke": "node scripts/smoke-real.mjs",
+		"lint": "biome lint .",
+		"lint:fix": "biome lint --write .",
+		"format": "biome format --write ."
 	},
 	"devDependencies": {
+		"@biomejs/biome": "2.6.3",
 		"@playwright/test": "1.48.1"
 	},
 	"keywords": [

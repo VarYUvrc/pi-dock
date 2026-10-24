@@ -43,7 +43,7 @@ function renderInline(text) {
 
 	let html = escapeHtml(text.trim());
 	html = html.replace(/`([^`\n]+)`/g, (_, code) => keep(`<code>${code}</code>`));
-	html = html.replace(/\[([^\]\n]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (match, label, url) => {
+	html = html.replace(/\[([^\]\n]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (_match, label, url) => {
 		const href = safeHref(url);
 		if (!href) return `${label} (${url})`;
 		return keep(

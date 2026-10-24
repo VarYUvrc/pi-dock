@@ -68,8 +68,9 @@ export class PiBridge extends EventEmitter {
 
 	#onStdout(chunk) {
 		this.#buffer += chunk;
-		let newline;
-		while ((newline = this.#buffer.indexOf("\n")) !== -1) {
+		while (true) {
+			const newline = this.#buffer.indexOf("\n");
+			if (newline === -1) break;
 			const line = this.#buffer.slice(0, newline).replace(/\r$/, "");
 			this.#buffer = this.#buffer.slice(newline + 1);
 			if (!line) continue;
