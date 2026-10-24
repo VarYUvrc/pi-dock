@@ -265,7 +265,7 @@ async function refreshSnapshot() {
 	}
 	state.queue = { steering: [], followUp: [] };
 	state.retry = null;
-	state.diff = null;
+	state.diff = diffFromTools(state.tools);
 	state.aborting = false;
 	state.ready = true;
 	state.piDown = "";
@@ -616,15 +616,35 @@ function countEditArgs(args) {
 	return { added, removed };
 }
 
-function accumulateToolDiff(record) {
-	if (record.isError) return;
-	let delta = null;
-	if (record.toolName === "edit") {
-		const patch = record.result?.details?.patch;
-		delta = typeof patch === "string" ? countPatch(patch) : countEditArgs(record.args);
-	} else if (record.toolName === "write") {
-		delta = { added: countLines(record.args?.content), removed: 0 };
+function toolDiff({ name, args, patch, isError }) {
+	if (isError) return null;
+	if (name === "edit") {
+		return typeof patch === "string" ? countPatch(patch) : countEditArgs(args);
 	}
+	if (name === "write") return { added: countLines(args?.content), removed: 0 };
+	return null;
+}
+
+function diffFromTools(tools) {
+	let total = null;
+	for (const tool of Object.values(tools)) {
+		if (tool?.status !== "done") continue;
+		const delta = toolDiff(tool);
+		if (!delta || (!delta.added && !delta.removed)) continue;
+		if (!total) total = { added: 0, removed: 0 };
+		total.added += delta.added;
+		total.removed += delta.removed;
+	}
+	return total;
+}
+
+function accumulateToolDiff(record) {
+	const delta = toolDiff({
+		name: record.toolName,
+		args: record.args,
+		patch: record.result?.details?.patch,
+		isError: record.isError,
+	});
 	if (!delta || (!delta.added && !delta.removed)) return;
 	if (!state.diff) state.diff = { added: 0, removed: 0 };
 	state.diff.added += delta.added;

@@ -1030,6 +1030,25 @@ test("shows edited line counts while the agent runs", async () => {
 	await expect(diff).toHaveCount(0);
 });
 
+test("keeps edited line counts when returning from history during a run", async () => {
+	await send("edit long please");
+	const diff = page.getByTestId("run-diff");
+	await expect(diff).toBeVisible({ timeout: 10_000 });
+	await expect(diff.locator(".add")).toHaveText("+2");
+	await expect(diff.locator(".del")).toHaveText("-1");
+
+	await page.locator("#historyButton").click();
+	await page.getByTestId("session-item").filter({ hasText: "過去の会話です" }).click();
+	await expect(page.getByTestId("run-diff")).toHaveCount(0);
+
+	await page.locator("#historyButton").click();
+	await page.getByTestId("session-item").filter({ hasText: "無題の会話" }).click();
+	await expect(page.locator("#stopButton")).toBeVisible();
+	await expect(diff).toBeVisible({ timeout: 10_000 });
+	await expect(diff.locator(".add")).toHaveText("+2");
+	await expect(diff.locator(".del")).toHaveText("-1");
+});
+
 test("sanitises model HTML", async () => {
 	await send("xss test");
 	await expect(page.getByTestId("message-assistant").last()).toContainText("done", {

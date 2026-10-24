@@ -446,7 +446,7 @@ async function promptInner(message, images = []) {
 		]);
 		for (const call of calls) await runTool(call);
 		await streamAssistant(
-			[{ type: "text", text: "編集結果を確認しています。".repeat(8) }],
+			[{ type: "text", text: "編集結果を確認しています。".repeat(message.includes("long") ? 50 : 8) }],
 			{ slow: true },
 		);
 		return;
