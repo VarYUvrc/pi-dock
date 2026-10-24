@@ -311,10 +311,12 @@ test("plus menu searches commands and inserts without sending", async () => {
 	await expect(page.locator("#planPanel")).toBeHidden();
 	await page.locator("#commandButton").click();
 	await expect(page.locator("#commandMenu")).toBeVisible();
-	await expect(page.getByTestId("command-item")).toHaveCount(3);
+	await expect(page.getByTestId("command-item").filter({ hasText: "/fix-tests" })).toHaveCount(1);
+	await expect(page.getByTestId("command-item").filter({ hasText: "/new" })).toHaveCount(1);
 	await expect(page.locator("#commandMenu")).toContainText("Prompt");
 	await expect(page.locator("#commandMenu")).toContainText("Skill");
 	await expect(page.locator("#commandMenu")).toContainText("Extension");
+	await expect(page.locator("#commandMenu")).toContainText("Built-in");
 
 	const search = page.locator('[data-role="command-search"]');
 	await search.fill("review");
@@ -538,7 +540,7 @@ test("models and thinking levels follow Pi", async () => {
 
 test("resumes a session from the Pi history", async () => {
 	await page.locator("#historyButton").click();
-	await expect(page.getByTestId("session-item")).toHaveCount(2);
+	await expect(page.getByTestId("session-item")).toHaveCount(3);
 	await expect(page.locator("#sessionList")).toContainText("リファクタ作業");
 	await expect(page.locator("#sessionList")).toContainText("過去の会話です");
 	await page.getByTestId("session-item").filter({ hasText: "過去の会話です" }).click();
@@ -606,10 +608,50 @@ test("sanitises model HTML", async () => {
 test("starts a new conversation", async () => {
 	await send("hello");
 	await expect(page.getByTestId("message-assistant").last()).toContainText("結果");
+	await page.locator("#historyButton").click();
 	await page.locator("#newChatButton").click();
 	await expect(page.getByTestId("message-user")).toHaveCount(0);
 	await expect(page.getByTestId("message-assistant")).toHaveCount(0);
 	await expect(page.locator("#empty")).toBeVisible();
+});
+
+test("keeps the previous run alive when starting a new chat", async () => {
+	await send("long please");
+	await expect(page.getByTestId("message-live")).toContainText("chunk 2");
+
+	await page.locator("#historyButton").click();
+	await page.locator("#newChatButton").click();
+	await expect(page.getByTestId("message-user")).toHaveCount(0);
+	await expect(page.locator("#empty")).toBeVisible();
+
+	// The old session keeps running in the background, independently of the new one.
+	await page.locator("#historyButton").click();
+	const running = page.getByTestId("session-item").filter({ has: page.locator(".s-run") });
+	await expect(running).toHaveCount(1);
+	await expect(running).toHaveCount(0, { timeout: 15_000 });
+
+	await page.locator(".session-item:not(.current)").filter({ hasText: "無題の会話" }).click();
+	await expect(page.getByTestId("message-user")).toHaveText("long please");
+	await expect(page.getByTestId("message-assistant")).toContainText("chunk 129");
+});
+
+test("runs Dock built-in slash commands", async () => {
+	await input().fill("/compact");
+	await input().press("Control+Enter");
+	await expect(page.getByTestId("toast").filter({ hasText: "圧縮しました" })).toBeVisible();
+	await expect(page.getByTestId("message-user")).toHaveCount(0);
+
+	await input().fill("/name 調査メモ");
+	await input().press("Control+Enter");
+	await expect(page.locator("#sessionName")).toHaveText("調査メモ");
+	await expect(page.getByTestId("message-user")).toHaveCount(0);
+
+	await page.locator("#commandButton").click();
+	await page.locator('[data-role="command-search"]').fill("compact");
+	await expect(page.getByTestId("command-item")).toHaveCount(1);
+	await page.getByTestId("command-item").click();
+	await expect(page.getByTestId("toast").filter({ hasText: "圧縮しました" }).last()).toBeVisible();
+	await expect(input()).toHaveValue("");
 });
 
 test("stopping restores queued steering text", async () => {

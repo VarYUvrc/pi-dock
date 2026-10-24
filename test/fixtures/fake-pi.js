@@ -67,6 +67,44 @@ const session = {
 };
 
 let buffer = "";
+
+async function openSession(path) {
+	const text = await readFile(path, "utf8");
+	const entries = text
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => {
+			try {
+				return JSON.parse(line);
+			} catch {
+				return null;
+			}
+		})
+		.filter(Boolean);
+	const header = entries.find((entry) => entry.type === "session");
+	const info = entries.filter((entry) => entry.type === "session_info").at(-1);
+	session.sessionId = header?.id ?? "imported";
+	session.sessionFile = path;
+	session.sessionName = info?.name;
+	session.entries = entries.filter(
+		(entry) => entry.type !== "session" && typeof entry.id === "string",
+	);
+	session.leafId = session.entries.at(-1)?.id ?? null;
+	session.plan = null;
+	session.messages = entries
+		.filter((entry) => entry.type === "message")
+		.map((entry) => entry.message);
+}
+
+const sessionArg = process.argv.indexOf("--session");
+if (sessionArg !== -1 && process.argv[sessionArg + 1]) {
+	try {
+		await openSession(process.argv[sessionArg + 1]);
+	} catch {
+		/* start an empty session if the fixture file is missing */
+	}
+}
+
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
 	buffer += chunk;
@@ -558,31 +596,7 @@ async function handle(record) {
 		case "switch_session": {
 			const path = record.sessionPath;
 			try {
-				const text = await readFile(path, "utf8");
-				const entries = text
-					.split("\n")
-					.filter(Boolean)
-					.map((line) => {
-						try {
-							return JSON.parse(line);
-						} catch {
-							return null;
-						}
-					})
-					.filter(Boolean);
-				const header = entries.find((entry) => entry.type === "session");
-				const info = entries.filter((entry) => entry.type === "session_info").at(-1);
-				session.sessionId = header?.id ?? "imported";
-				session.sessionFile = path;
-				session.sessionName = info?.name;
-				session.entries = entries.filter(
-					(entry) => entry.type !== "session" && typeof entry.id === "string",
-				);
-				session.leafId = session.entries.at(-1)?.id ?? null;
-				session.plan = null;
-				session.messages = entries
-					.filter((entry) => entry.type === "message")
-					.map((entry) => entry.message);
+				await openSession(path);
 				respond(id, type, { cancelled: false });
 			} catch (error) {
 				respond(id, type, undefined, error.message);

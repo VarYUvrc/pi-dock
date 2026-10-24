@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PiBridge } from "./pi.js";
 import { LiveState } from "./live.js";
@@ -54,6 +54,7 @@ const FORWARDED = new Set([
 	"get_commands",
 	"get_entries",
 	"get_tree",
+	"export_html",
 ]);
 
 const CONTENT_SECURITY_POLICY = [
@@ -125,37 +126,214 @@ export async function createDock({
 		assets.set(path, { body: await readFile(join(PUBLIC_DIR, file)), type });
 	}
 
-	const bridge = new PiBridge({
-		cwd,
-		launcher,
-		env,
-		piArgs: ["--extension", PLAN_EXTENSION, ...piArgs],
-	});
-	const live = new LiveState();
 	const clients = new Set();
-	let sessionName;
+	const runtimes = new Map();
+	let activeRuntime = null;
+	let runtimeSequence = 0;
 	let closing = false;
 	let actualPort = port;
 
-	bridge.on("record", (record) => {
-		live.apply(record);
-		if (record.type === "session_info_changed") sessionName = record.name;
-		broadcast(record);
+	const sessionKey = (value) =>
+		process.platform === "win32" ? resolve(value).toLowerCase() : resolve(value);
+
+	function runtimeSummary(runtime) {
+		return {
+			id: runtime.id,
+			sessionId: runtime.sessionId,
+			sessionFile: runtime.sessionFile,
+			sessionName: runtime.sessionName,
+			running: runtime.running,
+			exited: Boolean(runtime.exit),
+		};
+	}
+
+	async function refreshRuntimeState(runtime) {
+		if (!runtime.bridge.running) return null;
+		const state = await runtime.bridge
+			.request({ type: "get_state" }, { timeout: 5000 })
+			.catch(() => null);
+		if (!state) return null;
+		runtime.sessionId = state.sessionId ?? runtime.sessionId;
+		if (state.sessionFile !== undefined) runtime.sessionFile = state.sessionFile;
+		if (state.sessionName !== undefined) runtime.sessionName = state.sessionName;
+		runtime.running = Boolean(state.isStreaming);
+		return state;
+	}
+
+	function makeRuntime({ sessionPath = "", initial = false } = {}) {
+		const id = `r${++runtimeSequence}`;
+		const bridge = new PiBridge({
+			cwd,
+			launcher,
+			env,
+			piArgs: initial
+				? ["--extension", PLAN_EXTENSION, ...piArgs]
+				: ["--extension", PLAN_EXTENSION, ...(sessionPath ? ["--session", sessionPath] : [])],
+		});
+		const runtime = {
+			id,
+			bridge,
+			live: new LiveState(),
+			sessionId: "",
+			sessionFile: sessionPath,
+			sessionName: "",
+			running: false,
+			startedAt: Date.now(),
+			exit: null,
+			pendingUi: new Map(),
+		};
+		runtimes.set(id, runtime);
+		bridge.on("record", (record) => onRuntimeRecord(runtime, record));
+		bridge.on("exit", (info) => onRuntimeExit(runtime, info));
+		bridge.start();
+		return runtime;
+	}
+
+	function onRuntimeRecord(runtime, record) {
+		runtime.live.apply(record);
+		if (record.type === "session_info_changed") {
+			runtime.sessionName = record.name ?? "";
+		}
+		if (record.type === "agent_start") runtime.running = true;
+		if (record.type === "agent_settled") {
+			runtime.running = false;
+			refreshRuntimeState(runtime).catch(() => {});
+		}
+		if (
+			record.type === "extension_ui_request" &&
+			["select", "confirm", "input", "editor"].includes(record.method)
+		) {
+			runtime.pendingUi.set(record.id, record);
+		}
+
+		if (runtime !== activeRuntime) {
+			if (
+				[
+					"agent_start",
+					"agent_settled",
+					"session_info_changed",
+					"compaction_start",
+					"compaction_end",
+					"auto_retry_start",
+					"auto_retry_end",
+				].includes(record.type)
+			) {
+				broadcast({ type: "dock:runtime", runtime: runtimeSummary(runtime) });
+			}
+			return;
+		}
+
+		broadcast({ ...record, runtime: runtime.id });
 		if (record.type === "tool_execution_end" && record.toolName === PLAN_TOOL) {
-			broadcast({ type: "dock:plan", plan: normalizePlan(record.result?.details) });
+			broadcast({
+				type: "dock:plan",
+				runtime: runtime.id,
+				plan: normalizePlan(record.result?.details),
+			});
 		}
 		if (
 			record.type === "message_end" &&
 			record.message?.role === "toolResult" &&
 			record.message.toolName === PLAN_TOOL
 		) {
-			broadcast({ type: "dock:plan", plan: normalizePlan(record.message.details) });
+			broadcast({
+				type: "dock:plan",
+				runtime: runtime.id,
+				plan: normalizePlan(record.message.details),
+			});
 		}
-	});
-	bridge.on("exit", (info) => {
-		live.reset();
-		broadcast({ type: "dock:exit", reason: info.reason });
-	});
+	}
+
+	function onRuntimeExit(runtime, info) {
+		runtime.live.reset();
+		runtime.running = false;
+		runtime.exit = info;
+		if (runtime === activeRuntime) {
+			broadcast({ type: "dock:exit", runtime: runtime.id, reason: info.reason });
+			return;
+		}
+		runtimes.delete(runtime.id);
+		broadcast({ type: "dock:runtime", runtime: runtimeSummary(runtime) });
+	}
+
+	async function startRuntime(options = {}) {
+		const runtime = makeRuntime(options);
+		try {
+			await waitForPi(runtime.bridge);
+			await refreshRuntimeState(runtime);
+			return runtime;
+		} catch (error) {
+			await runtime.bridge.stop().catch(() => {});
+			runtimes.delete(runtime.id);
+			throw error;
+		}
+	}
+
+	function activateRuntime(runtime) {
+		if (activeRuntime && activeRuntime !== runtime && activeRuntime.exit) {
+			runtimes.delete(activeRuntime.id);
+		}
+		activeRuntime = runtime;
+		return runtime;
+	}
+
+	function findRuntimeByPath(path) {
+		const key = sessionKey(path);
+		for (const runtime of runtimes.values()) {
+			if (runtime.sessionFile && sessionKey(runtime.sessionFile) === key) return runtime;
+		}
+		return null;
+	}
+
+	function requireRuntime() {
+		if (!activeRuntime) throw new Error("Pi に接続されていません");
+		if (activeRuntime.exit) throw new Error(activeRuntime.exit.reason);
+		return activeRuntime;
+	}
+
+	async function dockSessions() {
+		await Promise.all(
+			[...runtimes.values()]
+				.filter((runtime) => runtime.bridge.running)
+				.map((runtime) => refreshRuntimeState(runtime)),
+		);
+		const currentId = activeRuntime?.sessionId ?? "";
+		const sessions = await listSessions({ cwd, currentId, env });
+		const bySessionId = new Map();
+		for (const runtime of runtimes.values()) {
+			if (runtime.sessionId && !runtime.exit) bySessionId.set(runtime.sessionId, runtime);
+		}
+		const represented = new Set(sessions.map((session) => session.id));
+		const live = [];
+		for (const runtime of runtimes.values()) {
+			if (!runtime.sessionId || runtime.exit || represented.has(runtime.sessionId)) continue;
+			live.push({
+				path: runtime.sessionFile,
+				id: runtime.sessionId,
+				name: runtime.sessionName,
+				preview: "",
+				created: "",
+				modified: new Date(runtime.startedAt).toISOString(),
+				size: 0,
+				current: runtime === activeRuntime,
+				runtime: runtime.id,
+				running: runtime.running,
+				live: true,
+			});
+		}
+		return [
+			...live.sort((a, b) => b.modified.localeCompare(a.modified)),
+			...sessions.map((session) => {
+				const runtime = bySessionId.get(session.id);
+				return {
+					...session,
+					runtime: runtime?.id ?? null,
+					running: Boolean(runtime?.running),
+					live: Boolean(runtime),
+				};
+			}),
+		];
+	}
 
 	function broadcast(record) {
 		if (clients.size === 0) return;
@@ -170,6 +348,8 @@ export async function createDock({
 	}
 
 	async function snapshot() {
+		const runtime = requireRuntime();
+		const bridge = runtime.bridge;
 		const [state, messages, stats, models, levels, commands, entries] = await Promise.all([
 			bridge.request({ type: "get_state" }),
 			bridge.request({ type: "get_messages" }),
@@ -179,24 +359,31 @@ export async function createDock({
 			bridge.request({ type: "get_commands" }).catch(() => null),
 			bridge.request({ type: "get_entries" }).catch(() => null),
 		]);
-		if (state?.sessionName !== undefined) sessionName = state.sessionName;
+		if (state) {
+			runtime.sessionId = state.sessionId ?? runtime.sessionId;
+			if (state.sessionFile !== undefined) runtime.sessionFile = state.sessionFile;
+			if (state.sessionName !== undefined) runtime.sessionName = state.sessionName;
+			runtime.running = Boolean(state.isStreaming);
+		}
 		const compaction = await describeCompaction({ cwd, env, model: state?.model });
 		return {
+			runtime: runtime.id,
 			cwd,
 			state,
-			live: live.snapshot(),
+			live: runtime.live.snapshot(),
 			messages: Array.isArray(messages?.messages) ? messages.messages : [],
 			stats: stats ?? null,
 			models: (models?.models ?? []).map(publicModel),
 			levels: levels?.levels ?? ["off"],
 			commands: commands?.commands ?? [],
 			plan: entries ? planFromEntries(entries.entries, entries.leafId) : null,
+			pendingUi: [...runtime.pendingUi.values()],
 			compaction,
 		};
 	}
 
 	async function currentModel() {
-		const state = await bridge.request({ type: "get_state" });
+		const state = await requireRuntime().bridge.request({ type: "get_state" });
 		if (!state?.model) throw new Error("モデルが選択されていません");
 		return state.model;
 	}
@@ -207,15 +394,35 @@ export async function createDock({
 		}
 
 		if (command.type === "dock:snapshot") return snapshot();
-		if (command.type === "dock:sessions") {
-			const state = await bridge.request({ type: "get_state" });
-			return await listSessions({ cwd, currentId: state?.sessionId, env });
+		if (command.type === "dock:sessions") return await dockSessions();
+		if (command.type === "dock:activate") {
+			const runtime = runtimes.get(String(command.runtimeId));
+			if (!runtime || runtime.exit) throw new Error("セッションが見つかりません");
+			activateRuntime(runtime);
+			return { runtime: runtime.id };
 		}
 		if (command.type === "dock:restart") {
-			await bridge.restart();
-			await waitForPi(bridge);
-			live.reset();
+			const runtime = activeRuntime;
+			if (!runtime) throw new Error("Pi に接続されていません");
+			runtime.exit = null;
+			await runtime.bridge.restart();
+			await waitForPi(runtime.bridge);
+			runtime.live.reset();
+			await refreshRuntimeState(runtime);
 			return { restarted: true };
+		}
+		if (command.type === "new_session") {
+			const runtime = await startRuntime();
+			activateRuntime(runtime);
+			return { cancelled: false, runtime: runtime.id };
+		}
+		if (command.type === "switch_session") {
+			if (typeof command.sessionPath !== "string") throw new Error("パスが不正です");
+			const runtime =
+				findRuntimeByPath(command.sessionPath) ??
+				(await startRuntime({ sessionPath: command.sessionPath }));
+			activateRuntime(runtime);
+			return { cancelled: false, runtime: runtime.id };
 		}
 		if (command.type === "dock:set_compaction") {
 			const model = await currentModel();
@@ -235,6 +442,10 @@ export async function createDock({
 		}
 		if (command.type === "dock:extension_ui_response") {
 			if (typeof command.id !== "string") throw new Error("id が不正です");
+			const runtime = command.runtimeId
+				? runtimes.get(String(command.runtimeId))
+				: requireRuntime();
+			if (!runtime) throw new Error("セッションが見つかりません");
 			const response = {
 				type: "extension_ui_response",
 				id: command.id,
@@ -244,7 +455,8 @@ export async function createDock({
 						? { confirmed: Boolean(command.confirmed) }
 						: { value: String(command.value ?? "") }),
 			};
-			bridge.sendRaw(response);
+			runtime.pendingUi.delete(command.id);
+			runtime.bridge.sendRaw(response);
 			return { sent: true };
 		}
 		if (!FORWARDED.has(command.type)) throw new Error("未対応のコマンドです");
@@ -258,10 +470,6 @@ export async function createDock({
 			const images = validateImages(command.images);
 			if (images) payload.images = images;
 			if (command.streamingBehavior) payload.streamingBehavior = command.streamingBehavior;
-		}
-		if (command.type === "switch_session") {
-			if (typeof command.sessionPath !== "string") throw new Error("パスが不正です");
-			payload.sessionPath = command.sessionPath;
 		}
 		if (command.type === "set_model") {
 			if (typeof command.provider !== "string" || typeof command.modelId !== "string") {
@@ -281,7 +489,7 @@ export async function createDock({
 		if (command.type === "compact" && typeof command.customInstructions === "string") {
 			payload.customInstructions = command.customInstructions;
 		}
-		return await bridge.request(payload, {
+		return await requireRuntime().bridge.request(payload, {
 			timeout: command.type === "abort" ? 90_000 : 60_000,
 		});
 	}
@@ -474,11 +682,9 @@ export async function createDock({
 	});
 	actualPort = server.address().port;
 
-	bridge.start();
 	try {
-		await waitForPi(bridge);
+		activateRuntime(await startRuntime({ initial: true }));
 	} catch (error) {
-		await bridge.stop();
 		server.close();
 		throw error;
 	}
@@ -489,7 +695,7 @@ export async function createDock({
 		port: actualPort,
 		url: `http://${host}:${actualPort}/?launch=${encodeURIComponent(token)}`,
 		get sessionName() {
-			return sessionName;
+			return activeRuntime?.sessionName;
 		},
 		async close() {
 			if (closing) return;
@@ -503,7 +709,7 @@ export async function createDock({
 				}
 			}
 			clients.clear();
-			await bridge.stop();
+			await Promise.all([...runtimes.values()].map((runtime) => runtime.bridge.stop()));
 			await new Promise((resolve) => server.close(resolve));
 		},
 	};

@@ -1979,6 +1979,10 @@ a:focus-visible {
 	margin-left: auto;
 }
 
+.drawer-head .ghost-icon + .ghost-icon {
+	margin-left: 0;
+}
+
 .session-list {
 	flex: 1;
 	overflow-y: auto;
@@ -2036,6 +2040,15 @@ a:focus-visible {
 	font-size: 11px;
 	color: var(--text-3);
 	font-variant-numeric: tabular-nums;
+}
+
+.s-run {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .s-preview {

@@ -71,6 +71,7 @@ const state = {
 	aborting: false,
 	retry: null,
 	cwd: "",
+	runtimeId: "",
 	sessionName: "",
 	sessionId: "",
 	model: null,
@@ -207,6 +208,7 @@ async function refreshSnapshot() {
 	const snapshot = await api({ type: "dock:snapshot" });
 	statsGeneration += 1;
 	const sessionChanged = state.sessionId !== (snapshot.state?.sessionId ?? "");
+	state.runtimeId = snapshot.runtime ?? "";
 	state.cwd = snapshot.cwd ?? "";
 	state.sessionState = snapshot.state ?? null;
 	state.model = snapshot.state?.model ?? null;
@@ -240,6 +242,7 @@ async function refreshSnapshot() {
 	state.ready = true;
 	state.piDown = "";
 	state.authError = "";
+	state.dialogs = [];
 	openKeys.clear();
 	messageNodes.clear();
 	dom.messageList.innerHTML = "";
@@ -249,14 +252,33 @@ async function refreshSnapshot() {
 	renderLive();
 	renderPlan();
 	renderRunStatus();
+	renderDialog();
+	for (const request of snapshot.pendingUi ?? []) {
+		onExtensionUi({ ...request, runtime: state.runtimeId });
+	}
 	scrollToBottom(true);
 }
 
 /* ---------------------------------------------------------------- events */
 
 function handleRecord(record) {
+	if (
+		record.runtime &&
+		record.type !== "dock:runtime" &&
+		record.runtime !== state.runtimeId
+	) {
+		return;
+	}
 	switch (record.type) {
 		case "dock:hello":
+			return;
+		case "dock:runtime":
+			for (const session of state.sessions) {
+				if (session.runtime !== record.runtime.id) continue;
+				session.running = record.runtime.running;
+				if (record.runtime.sessionName) session.name = record.runtime.sessionName;
+			}
+			if (!dom.historyPanel.hidden) renderSessionList();
 			return;
 		case "dock:exit":
 			state.piDown = record.reason ?? "Pi との接続が切れました";
@@ -555,7 +577,7 @@ function onExtensionUi(request) {
 		case "confirm":
 		case "input":
 		case "editor":
-			enqueueDialog(request);
+			enqueueDialog({ ...request, runtime: request.runtime ?? state.runtimeId });
 			return;
 		default:
 			return;
@@ -579,7 +601,12 @@ function respondDialog(request, response) {
 	listeners.extTimers.delete(request);
 	state.dialogs = state.dialogs.filter((item) => item !== request);
 	renderDialog();
-	api({ type: "dock:extension_ui_response", id: request.id, ...response }).catch((error) => {
+	api({
+		type: "dock:extension_ui_response",
+		id: request.id,
+		runtimeId: request.runtime,
+		...response,
+	}).catch((error) => {
 		toast(error.message, "error");
 	});
 }
@@ -691,6 +718,18 @@ async function send() {
 		toast("Pi に接続されていません", "error");
 		return;
 	}
+	const slash = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text);
+	const dockCommand = slash ? DOCK_COMMANDS.find((command) => command.name === slash[1]) : null;
+	if (dockCommand) {
+		dom.input.value = "";
+		autosize();
+		updateSendButton();
+		closeSlash();
+		closeMenus();
+		closeCommandMenu();
+		await runDockCommand(dockCommand, slash[2] ?? "");
+		return;
+	}
 	closeSlash();
 	closeMenus();
 	closeCommandMenu();
@@ -776,7 +815,7 @@ async function abort() {
 async function newChat() {
 	closeMenus();
 	closeHistory();
-	if (state.running) await abort();
+	const wasRunning = state.running;
 	try {
 		const result = await api({ type: "new_session" });
 		if (result?.cancelled) {
@@ -784,6 +823,7 @@ async function newChat() {
 			return;
 		}
 		await refreshSnapshot();
+		if (wasRunning) toast("前の会話はバックグラウンドで継続します");
 		dom.input.focus();
 	} catch (error) {
 		toast(error.message, "error");
@@ -791,13 +831,23 @@ async function newChat() {
 }
 
 async function switchSession(path) {
-	if (state.running) await abort();
 	try {
 		const result = await api({ type: "switch_session", sessionPath: path });
 		if (result?.cancelled) {
 			toast("切り替えはキャンセルされました", "warning");
 			return;
 		}
+		closeHistory();
+		await refreshSnapshot();
+		dom.input.focus();
+	} catch (error) {
+		toast(error.message, "error");
+	}
+}
+
+async function activateSession(runtimeId) {
+	try {
+		await api({ type: "dock:activate", runtimeId });
 		closeHistory();
 		await refreshSnapshot();
 		dom.input.focus();
@@ -1150,6 +1200,132 @@ window.addEventListener("resize", () => {
 
 /* -------------------------------------------------------------- slash menu */
 
+const DOCK_COMMANDS = [
+	{
+		name: "new",
+		description: "新しい会話を開始",
+		source: "dock",
+		run: newChat,
+	},
+	{
+		name: "resume",
+		description: "履歴から会話を再開",
+		source: "dock",
+		run: openHistory,
+	},
+	{
+		name: "compact",
+		description: "コンテキストを圧縮",
+		source: "dock",
+		run: async () => {
+			if (state.running) throw new Error("実行中は圧縮できません");
+			await api({ type: "compact" });
+			await refreshSnapshot();
+			toast("コンテキストを圧縮しました");
+		},
+	},
+	{
+		name: "model",
+		description: "モデルを選択",
+		source: "dock",
+		run: () => openMenu("model"),
+	},
+	{
+		name: "thinking",
+		description: "思考レベルを変更",
+		source: "dock",
+		run: () => openMenu("thinking"),
+	},
+	{
+		name: "settings",
+		description: "設定を開く",
+		source: "dock",
+		run: () => openMenu("settings"),
+	},
+	{
+		name: "session",
+		description: "セッションの使用量を表示",
+		source: "dock",
+		run: () => openMenu("context"),
+	},
+	{
+		name: "copy",
+		description: "最後の応答をコピー",
+		source: "dock",
+		run: async () => {
+			const text = lastAssistantText();
+			if (!text) throw new Error("コピーする応答がありません");
+			await copyText(text);
+			toast("最後の応答をコピーしました");
+		},
+	},
+	{
+		name: "export",
+		description: "セッションをHTMLに書き出す",
+		source: "dock",
+		run: async () => {
+			const result = await api({ type: "export_html" });
+			toast(result?.path ? `書き出しました: ${result.path}` : "書き出しました");
+		},
+	},
+	{
+		name: "name",
+		description: "セッション名を設定",
+		source: "dock",
+		argument: true,
+		run: async (args) => {
+			if (!args) throw new Error("名前を入力してください（例: /name 作業名）");
+			await api({ type: "set_session_name", name: args });
+			await refreshSnapshot();
+			toast("セッション名を設定しました");
+		},
+	},
+	{
+		name: "reload",
+		description: "Piを再起動して設定を再読み込み",
+		source: "dock",
+		run: async () => {
+			if (state.running) throw new Error("実行中は再読み込みできません");
+			await restartPi();
+		},
+	},
+];
+
+function allCommands() {
+	const names = new Set(state.commands.map((command) => command.name));
+	return [...state.commands, ...DOCK_COMMANDS.filter((command) => !names.has(command.name))];
+}
+
+function lastAssistantText() {
+	for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+		const message = state.messages[index];
+		if (message.role !== "assistant") continue;
+		const text = textOfContent(message.content).trim();
+		if (text) return text;
+	}
+	return "";
+}
+
+async function runDockCommand(command, args = "") {
+	try {
+		await command.run(args.trim());
+	} catch (error) {
+		toast(error.message, "error");
+	}
+}
+
+function chooseDockCommand(command) {
+	if (!command || command.source !== "dock") return false;
+	if (command.argument) return false;
+	if (dom.input.value.startsWith(`/${command.name}`)) {
+		dom.input.value = "";
+		autosize();
+		updateSendButton();
+	}
+	runDockCommand(command);
+	return true;
+}
+
 function updateSlash() {
 	const value = dom.input.value;
 	const match = /^\/([^\s]*)$/.exec(value);
@@ -1158,7 +1334,7 @@ function updateSlash() {
 		return;
 	}
 	const query = match[1].toLowerCase();
-	const items = state.commands.filter((command) => {
+	const items = allCommands().filter((command) => {
 		if (!query) return true;
 		return (
 			command.name.toLowerCase().includes(query) ||
@@ -1178,7 +1354,7 @@ function renderSlash() {
 	if (!menu) return;
 	const items = menu.items
 		.map((command, index) => {
-			const icon = command.source === "skill" ? "i-spark" : command.source === "extension" ? "i-extension" : "i-prompt";
+			const icon = commandSourceIcon(command.source);
 			return `<button type="button" class="menu-item${index === menu.index ? " active" : ""}" data-index="${index}" data-testid="slash-item">
 				<svg class="icon" aria-hidden="true"><use href="#${icon}"/></svg>
 				<span class="cmd-name">/${escapeHtml(command.name)}</span>
@@ -1208,10 +1384,12 @@ function insertCommand(command) {
 function chooseSlash(command) {
 	if (!command) return;
 	closeSlash();
+	if (chooseDockCommand(command)) return;
 	insertCommand(command);
 }
 
 function commandSourceLabel(source) {
+	if (source === "dock") return "Built-in";
 	if (source === "skill") return "Skill";
 	if (source === "extension") return "Extension";
 	if (source === "prompt" || source === "template") return "Prompt";
@@ -1219,6 +1397,7 @@ function commandSourceLabel(source) {
 }
 
 function commandSourceIcon(source) {
+	if (source === "dock") return "i-dock";
 	if (source === "skill") return "i-spark";
 	if (source === "extension") return "i-extension";
 	return "i-prompt";
@@ -1226,8 +1405,9 @@ function commandSourceIcon(source) {
 
 function filterCommands(query) {
 	const value = query.trim().toLowerCase();
-	if (!value) return state.commands;
-	return state.commands.filter((command) => {
+	const commands = allCommands();
+	if (!value) return commands;
+	return commands.filter((command) => {
 		const haystack = `${command.name} ${command.description ?? ""} ${commandSourceLabel(
 			command.source,
 		)}`.toLowerCase();
@@ -1303,6 +1483,7 @@ function closeCommandMenu() {
 function chooseCommand(command) {
 	if (!command) return;
 	closeCommandMenu();
+	if (chooseDockCommand(command)) return;
 	insertCommand(command);
 }
 
@@ -1747,7 +1928,9 @@ function renderSessionList() {
 		const name = session.name || session.preview || "無題の会話";
 		const preview = session.name ? session.preview : "";
 		return `<button type="button" class="session-item${session.current ? " current" : ""}" data-index="${index}" data-testid="session-item">
-			<span class="s-top"><span class="s-title">${escapeHtml(name)}</span><span class="s-time">${escapeHtml(relativeTime(session.modified))}</span></span>
+			<span class="s-top"><span class="s-title">${escapeHtml(name)}</span>${
+				session.running ? '<span class="s-run" title="実行中" aria-label="実行中"></span>' : ""
+			}<span class="s-time">${escapeHtml(relativeTime(session.modified))}</span></span>
 			${preview ? `<span class="s-preview">${escapeHtml(preview)}</span>` : ""}
 		</button>`;
 	});
@@ -1774,7 +1957,9 @@ dom.sessionList.addEventListener("click", (event) => {
 	const item = event.target.closest("[data-index]");
 	if (!item) return;
 	const session = state.sessions[Number(item.dataset.index)];
-	if (session && !session.current) switchSession(session.path);
+	if (!session || session.current) return;
+	if (session.runtime) activateSession(session.runtime);
+	else switchSession(session.path);
 });
 
 dom.newChatButton.addEventListener("click", newChat);

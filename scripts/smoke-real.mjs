@@ -18,7 +18,7 @@ if (argv[0] === "--cwd") {
 await mkdir(cwd, { recursive: true });
 
 const dock = await createDock({ cwd, launcher: locatePi(), port: 0 });
-const token = new URL(dock.url).searchParams.get("token");
+const token = new URL(dock.url).searchParams.get("launch");
 const call = async (command) => {
 	const response = await fetch(`http://127.0.0.1:${dock.port}/api/rpc`, {
 		method: "POST",
