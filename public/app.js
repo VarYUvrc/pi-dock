@@ -1420,7 +1420,7 @@ const DOCK_COMMANDS = [
 	},
 	{
 		name: "thinking",
-		description: "思考レベルを変更",
+		description: "推論強度を変更",
 		source: "dock",
 		run: () => openMenu("thinking"),
 	},
@@ -1767,6 +1767,7 @@ dom.slashMenu.addEventListener("click", (event) => {
 /* ------------------------------------------------------------------ menus */
 
 function openMenu(kind) {
+	if (kind === "thinking" && dom.thinkingButton.disabled) return;
 	if (state.menu === kind) {
 		closeMenus();
 		return;
@@ -1898,6 +1899,7 @@ function renderThinkingMenu() {
 		.map((level) => {
 			const current = level === state.thinkingLevel;
 			return `<button type="button" class="menu-item" data-level="${escapeHtml(level)}" aria-selected="${current}" data-testid="thinking-item">
+				<svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg>
 				<span class="label">${escapeHtml(level)}</span>
 				${current ? '<svg class="icon check" aria-hidden="true"><use href="#i-check"/></svg>' : ""}
 			</button>`;
@@ -3036,7 +3038,11 @@ function renderChrome() {
 	dom.modelLabel.textContent = state.model?.name ?? "モデル";
 	dom.modelButton.title = state.model ? `${state.model.provider}/${state.model.id}` : "モデル";
 	dom.thinkingLabel.textContent = state.thinkingLevel;
-	dom.thinkingButton.title = `思考レベル: ${state.thinkingLevel}`;
+	const effortEditable = (state.levels ?? []).length > 1;
+	dom.thinkingButton.disabled = !effortEditable;
+	dom.thinkingButton.title = effortEditable
+		? `推論強度: ${state.thinkingLevel}`
+		: `推論強度: ${state.thinkingLevel} (このモデルは変更できません)`;
 
 	const usage = state.contextUsage;
 	const known =

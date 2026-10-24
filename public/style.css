@@ -283,18 +283,53 @@ a:focus-visible {
 	color: var(--text);
 }
 
-.chip.ghost {
-	background: transparent;
-}
-
-.chip.ghost:hover {
-	background: var(--surface);
-}
-
 .chip[aria-expanded="true"] {
 	border-color: var(--line-strong);
 	background: var(--bg-elevated);
 	color: var(--text);
+}
+
+/* Model and reasoning effort read as one control: shared pill, one divider,
+   one chevron per segment so both look selectable. */
+.model-group {
+	display: inline-flex;
+	align-items: stretch;
+	height: 30px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--surface);
+	overflow: hidden;
+}
+
+.model-group .chip {
+	height: 100%;
+	padding: 0 9px;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+}
+
+.model-group .chip + .chip {
+	border-left: 1px solid var(--line);
+}
+
+.model-group .chip:hover {
+	background: var(--surface-2);
+}
+
+.model-group .chip[aria-expanded="true"] {
+	background: var(--bg-elevated);
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.model-group .chip:disabled {
+	color: var(--text-3);
+	opacity: 0.6;
+	cursor: default;
+}
+
+.model-group .chip:disabled:hover {
+	background: transparent;
 }
 
 .icon-btn {
@@ -2607,7 +2642,7 @@ body.resizing-plan * {
 		display: none;
 	}
 
-	.chip.ghost span {
+	.model-group .chip .icon:not(.chev) {
 		display: none;
 	}
 

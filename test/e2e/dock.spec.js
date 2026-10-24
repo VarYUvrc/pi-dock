@@ -65,7 +65,8 @@ test("loads the shell and enforces the token", async () => {
 	await expect(page.locator(".brand")).toContainText("Pi-dock");
 	await expect(page.locator("#projectName")).toHaveText("project");
 	await expect(page.locator("#projectName .icon use")).toHaveAttribute("href", "#i-folder");
-	await expect(page.locator(".top-actions > #projectName + #modelButton")).toHaveCount(1);
+	await expect(page.locator(".top-actions > #projectName + #modelGroup")).toHaveCount(1);
+	await expect(page.locator("#modelGroup > #modelButton + #thinkingButton")).toHaveCount(1);
 	await expect(page.locator("#composer")).toBeVisible();
 	await expect(page.getByTestId("message-user")).toHaveCount(0);
 
@@ -92,29 +93,37 @@ test("loads the shell and enforces the token", async () => {
 	);
 	expect(brokenToken.status()).toBe(401);
 
-	// The repository name should read as one row with the model/thinking chips:
-	// same text size/weight, icon size, and the same visible gap between labels.
+	// The repository name should read as one row with the model/effort control:
+	// same text size/weight, one shared background, and a chevron per segment so
+	// both halves look like dropdowns.
 	const topbar = await page.evaluate(() => {
 		const style = (selector) => {
 			const value = getComputedStyle(document.querySelector(selector));
-			return { size: value.fontSize, weight: value.fontWeight };
+			return { size: value.fontSize, weight: value.fontWeight, background: value.backgroundColor };
 		};
 		const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
 		const project = rect("#projectLabel");
 		const model = rect("#modelLabel");
 		const thinking = rect("#thinkingLabel");
-		const icon = rect("#projectName .icon");
 		return {
 			projectStyle: style("#projectName"),
 			chipStyle: style("#modelButton"),
-			iconWidth: icon.width,
+			effortStyle: style("#thinkingButton"),
+			groupStyle: style("#modelGroup"),
+			iconWidth: rect("#projectName .icon").width,
+			chevrons: document.querySelectorAll("#modelGroup .chip > .chev").length,
 			projectToModel: model.left - project.right,
 			modelToThinking: thinking.left - model.right,
 		};
 	});
 	expect(topbar.projectStyle).toEqual(topbar.chipStyle);
+	expect(topbar.effortStyle).toEqual(topbar.chipStyle);
 	expect(topbar.iconWidth).toBeCloseTo(15, 0);
-	expect(topbar.projectToModel).toBeCloseTo(topbar.modelToThinking, 0);
+	expect(topbar.chevrons).toBe(2);
+	expect(topbar.chipStyle.background).toBe("rgba(0, 0, 0, 0)");
+	expect(topbar.groupStyle.background).not.toBe("rgba(0, 0, 0, 0)");
+	expect(topbar.projectToModel).toBeGreaterThan(0);
+	expect(topbar.modelToThinking).toBeGreaterThan(0);
 });
 
 test("streams a reply with thinking, tools, markdown and copy", async () => {
@@ -827,10 +836,13 @@ test("restores only the active branch plan after resuming", async () => {
 });
 
 test("models and thinking levels follow Pi", async () => {
+	// The effort segment only offers one level for a non-reasoning model.
+	await expect(page.locator("#thinkingButton")).toBeDisabled();
 	await page.locator("#modelButton").click();
 	await expect(page.getByTestId("model-item")).toHaveCount(2);
 	await page.getByTestId("model-item").filter({ hasText: "Fake Reasoner" }).click();
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Reasoner");
+	await expect(page.locator("#thinkingButton")).toBeEnabled();
 
 	await page.locator("#thinkingButton").click();
 	await expect(page.getByTestId("thinking-item")).toHaveCount(4);
