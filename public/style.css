@@ -186,14 +186,22 @@ a:focus-visible {
 .project {
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
+	gap: 6px;
+	height: 30px;
+	padding-right: 30px;
 	min-width: 0;
-	font-weight: 650;
-	letter-spacing: -0.01em;
+	font-size: 12.5px;
+	font-weight: 400;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	max-width: 200px;
+}
+
+.project span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .project[hidden] {
@@ -201,13 +209,9 @@ a:focus-visible {
 }
 
 .project .icon {
-	width: 13px;
-	height: 13px;
+	width: 15px;
+	height: 15px;
 	color: var(--text-3);
-}
-
-.project:not(:empty) {
-	margin-right: 2px;
 }
 
 .session {
@@ -1100,7 +1104,6 @@ body.resizing-plan * {
 .work > summary .chev {
 	width: 13px;
 	height: 13px;
-	margin-left: 2px;
 	color: var(--text-3);
 	transition: transform 0.15s ease;
 }
@@ -1200,7 +1203,6 @@ body.resizing-plan * {
 	width: 13px;
 	height: 13px;
 	color: var(--text-3);
-	margin-left: 2px;
 	transition: transform 0.15s ease;
 }
 
@@ -2006,13 +2008,6 @@ body.resizing-plan * {
 	height: 15px;
 }
 
-.hint {
-	font-size: 11.5px;
-	color: var(--text-3);
-	padding: 0 6px;
-	line-height: 1.5;
-}
-
 .stat-row {
 	display: flex;
 	align-items: baseline;
@@ -2066,8 +2061,39 @@ body.resizing-plan * {
 	font-weight: 600;
 }
 
-.compaction-row + .hint {
-	padding: 2px 8px 6px;
+.compaction-meter {
+	position: relative;
+	height: 20px;
+	margin: 2px 8px 6px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--surface);
+	overflow: hidden;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.compaction-meter-fill {
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: var(--meter-fill);
+	background: var(--accent);
+}
+
+.compaction-meter-text {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	padding: 0 9px;
+	line-height: 1;
+	white-space: nowrap;
+	color: var(--text-2);
+}
+
+.compaction-meter-text.on-fill {
+	color: var(--accent-ink);
+	clip-path: inset(0 calc(100% - var(--meter-fill)) 0 0);
 }
 
 /* ----------------------------------------------------------------- drawer */

@@ -91,6 +91,30 @@ test("loads the shell and enforces the token", async () => {
 		`http://127.0.0.1:${dock.port}/api/events?token=wrong`,
 	);
 	expect(brokenToken.status()).toBe(401);
+
+	// The repository name should read as one row with the model/thinking chips:
+	// same text size/weight, icon size, and the same visible gap between labels.
+	const topbar = await page.evaluate(() => {
+		const style = (selector) => {
+			const value = getComputedStyle(document.querySelector(selector));
+			return { size: value.fontSize, weight: value.fontWeight };
+		};
+		const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
+		const project = rect("#projectLabel");
+		const model = rect("#modelLabel");
+		const thinking = rect("#thinkingLabel");
+		const icon = rect("#projectName .icon");
+		return {
+			projectStyle: style("#projectName"),
+			chipStyle: style("#modelButton"),
+			iconWidth: icon.width,
+			projectToModel: model.left - project.right,
+			modelToThinking: thinking.left - model.right,
+		};
+	});
+	expect(topbar.projectStyle).toEqual(topbar.chipStyle);
+	expect(topbar.iconWidth).toBeCloseTo(15, 0);
+	expect(topbar.projectToModel).toBeCloseTo(topbar.modelToThinking, 0);
 });
 
 test("streams a reply with thinking, tools, markdown and copy", async () => {
@@ -162,6 +186,16 @@ test("groups multiple tools into a stable work rail and keeps failures visible",
 		.locator(".work-rail")
 		.evaluate((node) => node.getBoundingClientRect().width);
 	expect(railWidth).toBeGreaterThan(0);
+	const indicators = await groups.evaluateAll((nodes) =>
+		nodes.map((node) => {
+			const rail = node.querySelector(".work-rail").getBoundingClientRect();
+			const chev = node.querySelector("summary > .chev").getBoundingClientRect();
+			const label = node.querySelector(".work-label").getBoundingClientRect();
+			return { railLeft: Math.round(rail.left), chevRight: chev.right, labelLeft: label.left };
+		}),
+	);
+	expect(new Set(indicators.map((item) => item.railLeft)).size).toBe(1);
+	for (const item of indicators) expect(item.chevRight).toBeLessThan(item.labelLeft);
 	await work.locator("summary").first().click();
 	await expect(work.getByTestId("tool")).toHaveCount(3);
 	await expect(work.getByTestId("tool").first()).toContainText("echo one");
@@ -297,6 +331,13 @@ test("sets per-model compaction in Pi settings without losing other settings", a
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "true");
 	await expect(page.locator("#contextButton")).toHaveAttribute("title", /自動圧縮 25%/);
 	await expect(page.getByTestId("compaction-toggle")).toHaveCount(0);
+	const meter = page.getByTestId("compaction-meter");
+	await expect(meter).toBeVisible();
+	await expect(meter).toContainText("1.2k / 8k (15%)");
+	const fill = await meter
+		.locator(".compaction-meter-fill")
+		.evaluate((node) => node.getBoundingClientRect().width / node.parentElement.getBoundingClientRect().width);
+	expect(fill).toBeCloseTo(0.154, 2);
 
 	let saved = JSON.parse(await readFile(settingsFile, "utf8"));
 	expect(saved.theme).toBe("dark");

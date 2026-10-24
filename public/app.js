@@ -1940,6 +1940,7 @@ function renderContextMenu() {
 	const thresholdTokens = Number.isFinite(compaction?.thresholdTokens)
 		? Math.round(compaction.thresholdTokens)
 		: null;
+	const usedTokens = tokens ?? 0;
 	const rows = [
 		["コンテキスト", percent === null ? "—" : `${percent}%`],
 		[
@@ -1967,11 +1968,7 @@ function renderContextMenu() {
 				<button type="button" data-compaction-clear data-testid="compaction-default">既定</button>
 			</div>
 		</div>
-		${
-			thresholdTokens === null
-				? ""
-				: `<div class="hint">約 ${escapeHtml(thresholdTokens.toLocaleString())} トークンで自動圧縮</div>`
-		}` +
+		${compactionMeterMarkup(usedTokens, thresholdTokens)}` +
 		(state.running || state.compacting
 			? ""
 			: `<div class="setting-row compaction-row">
@@ -1980,6 +1977,35 @@ function renderContextMenu() {
 					<button type="button" data-action="compact" data-testid="compact-button" title="コンテキストを圧縮">実行</button>
 				</div>
 			</div>`);
+}
+
+function compactionMeterMarkup(usedTokens, thresholdTokens) {
+	if (thresholdTokens === null) return "";
+	const ratio = thresholdTokens > 0 ? usedTokens / thresholdTokens : 0;
+	const fill = Math.max(0, Math.min(100, ratio * 100));
+	const percent = Math.max(0, Math.round(ratio * 100));
+	const short = `${formatTokenCount(usedTokens)} / ${formatTokenCount(thresholdTokens)} (${percent}%)`;
+	const full = `${usedTokens.toLocaleString()} / ${thresholdTokens.toLocaleString()} トークン (${percent}%)`;
+	return `<div class="compaction-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(
+		100,
+		percent,
+	)}" aria-valuetext="${escapeHtml(full)}" title="${escapeHtml(
+		full,
+	)}" data-testid="compaction-meter" style="--meter-fill:${fill.toFixed(2)}%">
+		<span class="compaction-meter-fill" aria-hidden="true"></span>
+		<span class="compaction-meter-text">${escapeHtml(short)}</span>
+		<span class="compaction-meter-text on-fill" aria-hidden="true">${escapeHtml(short)}</span>
+	</div>`;
+}
+
+function formatTokenCount(value) {
+	const count = Math.max(0, Math.round(Number(value) || 0));
+	if (count < 1_000) return String(count);
+	const scaled = count < 1_000_000 ? count / 1_000 : count / 1_000_000;
+	const suffix = count < 1_000_000 ? "k" : "M";
+	const rounded =
+		Math.abs(scaled - Math.round(scaled)) > 0.05 ? scaled.toFixed(1) : String(Math.round(scaled));
+	return `${rounded}${suffix}`;
 }
 
 function numberOrNull(value) {
@@ -2756,11 +2782,11 @@ function workMarkup(items, key, prefix) {
 		openKeys.has(key) ? " open" : ""
 	}>
 		<summary>
-			<span class="work-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
+			<svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg>
 			<span class="work-rail" aria-hidden="true">${rail}</span>
+			<span class="work-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
 			${tools}
 			${status === "error" ? '<svg class="icon work-alert" aria-hidden="true"><use href="#i-alert"/></svg>' : ""}
-			<svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg>
 		</summary>
 		<div class="work-body">${body}</div>
 	</details>`;
@@ -2775,7 +2801,7 @@ function parseArgs(text) {
 	}
 }
 
-function toolSummary(name, args) {
+function toolSummary(_name, args) {
 	if (!args) return "";
 	if (typeof args === "string") return args.slice(0, 160);
 	if (typeof args !== "object") return "";
@@ -2826,12 +2852,12 @@ function toolCardMarkup(tool, prefix, testId = "tool") {
 		openKeys.has(key) ? " open" : ""
 	} data-testid="${testId}">
 		<summary>
+			<svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg>
 			<span class="dot ${status}"></span>
 			<svg class="icon" aria-hidden="true"><use href="#i-tool"/></svg>
 			<span class="tool-name">${escapeHtml(tool.name ?? "tool")}</span>
 			<span class="tool-summary" title="${escapeHtml(summary)}">${escapeHtml(summary)}</span>
 			${meta ? `<span class="tool-meta">${escapeHtml(meta)}</span>` : ""}
-			<svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg>
 		</summary>
 		<div class="tool-body">
 			${argsText ? `<div class="tool-args"><span>引数</span><pre>${escapeHtml(argsText)}</pre></div>` : ""}
