@@ -2,6 +2,11 @@ import { lstat, open, readdir, realpath, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, extname, join } from "node:path";
 
+/** @typedef {import("./pi-protocol.js").PiContent} PiContent */
+/** @typedef {import("./pi-protocol.js").PiSessionLine} PiSessionLine */
+/** @typedef {import("./pi-protocol.js").PiTextBlock} PiTextBlock */
+/** @typedef {{ id: string, cwd: string, created: string, name: string, preview: string }} SessionInfo */
+
 const HEAD_BYTES = 32 * 1024;
 const TAIL_BYTES = 8 * 1024;
 
@@ -26,15 +31,19 @@ async function readChunk(path, start, length) {
 	}
 }
 
+/** @param {PiContent | undefined} content */
 function textOf(content) {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
-	return content
-		.filter((block) => block?.type === "text")
-		.map((block) => block.text)
-		.join("\n");
+	const texts = /** @type {PiTextBlock[]} */ (content.filter((block) => block?.type === "text"));
+	return texts.map((block) => block.text).join("\n");
 }
 
+/**
+ * @param {string} text
+ * @param {{ skipPartialFirst?: boolean }} [options]
+ * @returns {PiSessionLine[]}
+ */
 function parseLines(text, { skipPartialFirst = false } = {}) {
 	let body = text;
 	if (skipPartialFirst) {
@@ -53,6 +62,10 @@ function parseLines(text, { skipPartialFirst = false } = {}) {
 	return records;
 }
 
+/**
+ * @param {PiSessionLine[]} records
+ * @param {SessionInfo} info
+ */
 function summarize(records, info) {
 	for (const record of records) {
 		if (record.type === "session") {

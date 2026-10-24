@@ -1,6 +1,11 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 
+/** @typedef {import("./pi-protocol.js").PiCommand} PiCommand */
+/** @typedef {import("./pi-protocol.js").PiCommandData} PiCommandData */
+/** @typedef {import("./pi-protocol.js").PiRecord} PiRecord */
+/** @typedef {import("./pi-protocol.js").PiResponse} PiResponse */
+
 const MAX_STDERR = 8 * 1024;
 const DEFAULT_TIMEOUT = 60_000;
 
@@ -13,6 +18,7 @@ const DEFAULT_TIMEOUT = 60_000;
 export class PiBridge extends EventEmitter {
 	#process = null;
 	#buffer = "";
+	/** @type {Map<string, { resolve: (value: any) => void, reject: (reason?: any) => void, timer: NodeJS.Timeout }>} */
 	#pending = new Map();
 	#sequence = 0;
 	#stderr = "";
@@ -84,6 +90,7 @@ export class PiBridge extends EventEmitter {
 		}
 	}
 
+	/** @param {PiRecord | PiResponse} record */
 	#dispatch(record) {
 		if (record.type === "response") {
 			const pending = this.#pending.get(record.id);
@@ -114,7 +121,13 @@ export class PiBridge extends EventEmitter {
 		if (!this.#stopping) this.emit("exit", info);
 	}
 
-	/** Send one RPC command and resolve with its `data` payload. */
+	/**
+	 * Send one RPC command and resolve with its `data` payload.
+	 * @template {PiCommand} Command
+	 * @param {Command} command
+	 * @param {{ timeout?: number }} [options]
+	 * @returns {Promise<PiCommandData[Command["type"]]>}
+	 */
 	request(command, { timeout = DEFAULT_TIMEOUT } = {}) {
 		const child = this.#process;
 		if (!child || child.exitCode !== null) {
@@ -142,7 +155,10 @@ export class PiBridge extends EventEmitter {
 		});
 	}
 
-	/** Send a fire-and-forget record (no response is expected). */
+	/**
+	 * Send a fire-and-forget record (no response is expected).
+	 * @param {PiRecord | PiCommand} record
+	 */
 	sendRaw(record) {
 		const stdin = this.#process?.stdin;
 		if (!stdin?.writable) throw new Error("Pi に接続されていません");

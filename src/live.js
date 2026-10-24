@@ -1,3 +1,8 @@
+/** @typedef {import("./pi-protocol.js").PiRecord} PiRecord */
+/** @typedef {import("./pi-protocol.js").PiAssistantMessageEvent} PiAssistantMessageEvent */
+/** @typedef {import("./pi-protocol.js").PiTextBlock} PiTextBlock */
+/** @typedef {import("./pi-protocol.js").PiToolOutput} PiToolOutput */
+
 /**
  * In-memory view of the assistant message currently being streamed.
  * Used only for snapshots (page reload during a run); rendering itself is
@@ -12,6 +17,7 @@ export class LiveState {
 		this.#tools.clear();
 	}
 
+	/** @param {PiRecord} record */
 	apply(record) {
 		switch (record.type) {
 			case "agent_start":
@@ -57,6 +63,7 @@ export class LiveState {
 		}
 	}
 
+	/** @param {PiAssistantMessageEvent | undefined} update */
 	#applyUpdate(update) {
 		if (!update) return;
 		const index = update.contentIndex;
@@ -114,14 +121,13 @@ export class LiveState {
 	}
 }
 
+/** @param {PiToolOutput | string | null | undefined} result */
 export function toolText(result) {
 	if (!result) return "";
 	if (typeof result === "string") return result;
 	const content = result.content ?? result.partialResult?.content ?? [];
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
-	return content
-		.filter((block) => block?.type === "text")
-		.map((block) => block.text)
-		.join("\n");
+	const texts = /** @type {PiTextBlock[]} */ (content.filter((block) => block?.type === "text"));
+	return texts.map((block) => block.text).join("\n");
 }
