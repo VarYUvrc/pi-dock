@@ -1,4 +1,4 @@
-# Pi Dock
+# Pi-dock
 
 Pi Coding Agent をブラウザから使うための、薄いローカル Web UI。
 

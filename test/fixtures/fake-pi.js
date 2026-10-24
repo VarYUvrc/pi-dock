@@ -323,10 +323,17 @@ async function runTool(call = session.lastToolCall, { isError = false } = {}) {
 	const outcome =
 		call.name === "dock_plan"
 			? applyPlan(call.arguments)
-			: {
-					content: [{ type: "text", text: isError ? "boom from fake pi\n" : "hi from fake pi\n" }],
-					details: {},
-				};
+			: call.name === "edit"
+				? {
+						content: [{ type: "text", text: `Successfully edited ${call.arguments.path}\n` }],
+						details: {
+							patch: `--- ${call.arguments.path}\n+++ ${call.arguments.path}\n@@ -1,2 +1,3 @@\n const a = 1;\n-const b = 2;\n+const b = 3;\n+const c = 4;\n`,
+						},
+					}
+				: {
+						content: [{ type: "text", text: isError ? "boom from fake pi\n" : "hi from fake pi\n" }],
+						details: {},
+					};
 	session.contextTokens += 700;
 	write({
 		type: "tool_execution_end",
@@ -422,6 +429,25 @@ async function promptInner(message, images = []) {
 
 	if (message.includes("plan")) {
 		await planPrompt(message);
+		return;
+	}
+
+	if (message.includes("edit")) {
+		const { calls } = await streamAssistant([
+			{
+				type: "toolCall",
+				name: "edit",
+				args: {
+					path: "src/demo.js",
+					edits: [{ oldText: "const b = 2;", newText: "const b = 3;\nconst c = 4;" }],
+				},
+			},
+		]);
+		for (const call of calls) await runTool(call);
+		await streamAssistant(
+			[{ type: "text", text: "編集結果を確認しています。".repeat(8) }],
+			{ slow: true },
+		);
 		return;
 	}
 

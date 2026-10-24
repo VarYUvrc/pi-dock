@@ -80,6 +80,7 @@ const state = {
 	compacting: false,
 	aborting: false,
 	retry: null,
+	diff: null,
 	cwd: "",
 	runtimeId: "",
 	sessionName: "",
@@ -255,6 +256,7 @@ async function refreshSnapshot() {
 	}
 	state.queue = { steering: [], followUp: [] };
 	state.retry = null;
+	state.diff = null;
 	state.aborting = false;
 	state.ready = true;
 	state.piDown = "";
@@ -324,6 +326,7 @@ function handleRecord(record) {
 			}
 			state.aborting = false;
 			state.retry = null;
+			state.diff = null;
 			state.sendMode = "steer";
 			state.live = { blocks: [], tools: state.tools };
 			startStatsPolling();
@@ -550,6 +553,8 @@ function onToolEvent(record) {
 		tool.output = toolText(record.result) || tool.output || "";
 		tool.durationMs = record.durationMs ?? (tool.startedAt ? Date.now() - tool.startedAt : undefined);
 		state.tools[id] = tool;
+		accumulateToolDiff(record);
+		renderRunStatus();
 		startStatsPolling();
 		scheduleStats(900);
 	}
@@ -568,6 +573,53 @@ function toolText(result) {
 		.filter((block) => block?.type === "text")
 		.map((block) => block.text)
 		.join("\n");
+}
+
+function countLines(text) {
+	if (typeof text !== "string" || !text) return 0;
+	const normalized = text.replace(/\r\n/g, "\n");
+	return normalized.split("\n").length - (normalized.endsWith("\n") ? 1 : 0);
+}
+
+function countPatch(patch) {
+	let added = 0;
+	let removed = 0;
+	for (const line of patch.split(/\r?\n/)) {
+		if (/^(---|\+\+\+)\s/.test(line)) continue;
+		if (line.startsWith("+")) added += 1;
+		else if (line.startsWith("-")) removed += 1;
+	}
+	return { added, removed };
+}
+
+function countEditArgs(args) {
+	const edits = Array.isArray(args?.edits)
+		? args.edits
+		: typeof args?.oldText === "string" && typeof args?.newText === "string"
+			? [args]
+			: [];
+	let added = 0;
+	let removed = 0;
+	for (const edit of edits) {
+		added += countLines(edit?.newText);
+		removed += countLines(edit?.oldText);
+	}
+	return { added, removed };
+}
+
+function accumulateToolDiff(record) {
+	if (record.isError) return;
+	let delta = null;
+	if (record.toolName === "edit") {
+		const patch = record.result?.details?.patch;
+		delta = typeof patch === "string" ? countPatch(patch) : countEditArgs(record.args);
+	} else if (record.toolName === "write") {
+		delta = { added: countLines(record.args?.content), removed: 0 };
+	}
+	if (!delta || (!delta.added && !delta.removed)) return;
+	if (!state.diff) state.diff = { added: 0, removed: 0 };
+	state.diff.added += delta.added;
+	state.diff.removed += delta.removed;
 }
 
 /* -------------------------------------------------------------- extension */
@@ -593,7 +645,7 @@ function onExtensionUi(request) {
 			return;
 		}
 		case "setTitle":
-			document.title = request.title || "pi-dock";
+			document.title = request.title || "Pi-dock";
 			return;
 		case "set_editor_text":
 			if (typeof request.text === "string") {
@@ -1814,8 +1866,7 @@ function renderSettingsMenu() {
 	<div class="setting-row">
 		<span>Ctrl+Enter で送信</span>
 		<button type="button" class="switch" role="switch" aria-checked="${settings.ctrlEnterSend}" aria-label="Ctrl+Enterで送信" data-testid="ctrl-enter-toggle"></button>
-	</div>
-	<div class="hint">Enter は改行</div>`;
+	</div>`;
 }
 
 function renderContextMenu() {
@@ -1843,14 +1894,6 @@ function renderContextMenu() {
 		["メッセージ", String(state.stats?.totalMessages ?? state.messages.length)],
 	];
 	if (cost) rows.push(["コスト", `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`]);
-	const compactionValue = !compaction
-		? "—"
-		: !compaction.enabled
-			? "無効"
-			: thresholdPercent === null
-				? "既定"
-				: `${thresholdPercent}%`;
-	rows.push(["自動圧縮", compactionValue]);
 	const pressed = (value) => thresholdPercent !== null && thresholdPercent === value;
 	dom.contextMenu.innerHTML =
 		rows
@@ -1861,14 +1904,11 @@ function renderContextMenu() {
 			.join("") +
 		`<div class="setting-row compaction-row">
 			<span>自動圧縮</span>
-			<button type="button" class="switch" role="switch" aria-checked="${Boolean(
-				compaction?.enabled,
-			)}" aria-label="自動圧縮" data-compaction-toggle data-testid="compaction-toggle"></button>
-		</div>
-		<div class="compaction-actions" role="group" aria-label="自動圧縮のしきい値">
-			<button type="button" data-compaction-percent="25" aria-pressed="${pressed(25)}" data-testid="compaction-25">25%</button>
-			<button type="button" data-compaction-percent="50" aria-pressed="${pressed(50)}" data-testid="compaction-50">50%</button>
-			<button type="button" data-compaction-clear data-testid="compaction-default">既定</button>
+			<div class="compaction-actions" role="group" aria-label="自動圧縮のしきい値">
+				<button type="button" data-compaction-percent="25" aria-pressed="${pressed(25)}" data-testid="compaction-25">25%</button>
+				<button type="button" data-compaction-percent="50" aria-pressed="${pressed(50)}" data-testid="compaction-50">50%</button>
+				<button type="button" data-compaction-clear data-testid="compaction-default">既定</button>
+			</div>
 		</div>
 		${
 			thresholdTokens === null
@@ -1877,7 +1917,12 @@ function renderContextMenu() {
 		}` +
 		(state.running || state.compacting
 			? ""
-			: '<div class="menu-foot"><button type="button" class="menu-item" data-action="compact" data-testid="compact-button"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg><span class="label">コンテキストを圧縮</span></button></div>');
+			: `<div class="setting-row compaction-row">
+				<span>手動圧縮</span>
+				<div class="compaction-actions">
+					<button type="button" data-action="compact" data-testid="compact-button" title="コンテキストを圧縮">実行</button>
+				</div>
+			</div>`);
 }
 
 function numberOrNull(value) {
@@ -1943,19 +1988,6 @@ dom.contextMenu.addEventListener("click", async (event) => {
 			renderChrome();
 			renderContextMenu();
 			toast("自動圧縮を既定に戻しました");
-		} catch (error) {
-			toast(error.message, "error");
-		}
-		return;
-	}
-	const toggle = event.target.closest("[data-compaction-toggle]");
-	if (toggle) {
-		const enabled = toggle.getAttribute("aria-checked") !== "true";
-		try {
-			await api({ type: "dock:set_compaction", action: "enable", enabled });
-			if (state.compaction) state.compaction.enabled = enabled;
-			renderChrome();
-			renderContextMenu();
 		} catch (error) {
 			toast(error.message, "error");
 		}
@@ -2807,8 +2839,13 @@ function renderRunStatus() {
 		: state.retry
 			? `再試行 ${state.retry.attempt}/${state.retry.maxAttempts}`
 			: "";
+	const diff = state.diff;
 	dom.runStatus.innerHTML = `<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>${
 		text ? `<span>${escapeHtml(text)}</span>` : ""
+	}${
+		diff && (diff.added || diff.removed)
+			? `<span class="run-diff" data-testid="run-diff"><span class="add">+${diff.added}</span><span class="del">-${diff.removed}</span></span>`
+			: ""
 	}${
 		Number.isFinite(state.runStartedAt)
 			? '<span class="run-elapsed" data-testid="run-elapsed"></span>'
@@ -2820,7 +2857,7 @@ function renderRunStatus() {
 
 function renderChrome() {
 	const project = state.cwd ? state.cwd.split(/[\\/]/).filter(Boolean).pop() : "";
-	dom.projectName.textContent = project || "pi-dock";
+	dom.projectName.textContent = project || "Pi-dock";
 	dom.projectName.title = state.cwd;
 	dom.sessionName.textContent = state.sessionName;
 	dom.sessionName.title = state.sessionName;
@@ -2896,7 +2933,7 @@ function renderChrome() {
 
 	renderWidgets();
 	renderBanner();
-	document.title = state.sessionName ? `${state.sessionName} · pi-dock` : "pi-dock";
+	document.title = state.sessionName ? `${state.sessionName} · Pi-dock` : "Pi-dock";
 }
 
 function renderWidgets() {

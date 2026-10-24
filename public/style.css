@@ -1251,6 +1251,22 @@ a:focus-visible {
 	animation-delay: 0.32s;
 }
 
+.run-diff {
+	display: inline-flex;
+	gap: 6px;
+	font-family: var(--mono);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.run-diff .add {
+	color: var(--ok);
+}
+
+.run-diff .del {
+	color: var(--err);
+}
+
 .run-elapsed {
 	min-width: 8.2ch;
 	font-family: var(--mono);
@@ -1728,14 +1744,6 @@ a:focus-visible {
 	color: var(--text-3);
 }
 
-.menu-foot {
-	padding: 6px 9px 4px;
-	font-size: 11px;
-	color: var(--text-3);
-	border-top: 1px solid var(--line);
-	margin-top: 4px;
-}
-
 .slash-menu {
 	position: absolute;
 	left: 0;
@@ -1943,11 +1951,10 @@ a:focus-visible {
 .compaction-actions {
 	display: flex;
 	gap: 4px;
-	padding: 0 8px 2px;
 }
 
 .compaction-actions button {
-	flex: 1;
+	min-width: 44px;
 	padding: 5px 8px;
 	border: 1px solid var(--line);
 	border-radius: 8px;
@@ -1973,7 +1980,7 @@ a:focus-visible {
 	font-weight: 600;
 }
 
-.compaction-actions + .hint {
+.compaction-row + .hint {
 	padding: 2px 8px 6px;
 }
 

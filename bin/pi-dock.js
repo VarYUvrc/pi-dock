@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { createDock } from "../src/server.js";
 import { locatePi } from "../src/pi-path.js";
 
-const HELP = `pi-dock — local web UI for the Pi coding agent
+const HELP = `Pi-dock — local web UI for the Pi coding agent
 
 Usage:
   pi-dock [options]
@@ -90,7 +90,7 @@ async function main() {
 		port,
 		piArgs: options.continue ? ["--continue"] : [],
 	});
-	process.stdout.write(`\n  pi-dock  ${dock.url}\n  ${cwd}\n\n`);
+	process.stdout.write(`\n  Pi-dock  ${dock.url}\n  ${cwd}\n\n`);
 	if (options.open !== false) openBrowser(dock.url);
 
 	let stopping = false;

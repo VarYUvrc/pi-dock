@@ -246,19 +246,18 @@ test("sets per-model compaction in Pi settings without losing other settings", a
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
 	await page.locator("#contextButton").click();
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
+	await expect(
+		page.locator("#contextMenu .setting-row").filter({ hasText: "自動圧縮" }),
+	).toHaveCount(1);
 	await page.getByTestId("compaction-25").click();
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "true");
 	await expect(page.locator("#contextButton")).toHaveAttribute("title", /自動圧縮 25%/);
+	await expect(page.getByTestId("compaction-toggle")).toHaveCount(0);
 
 	let saved = JSON.parse(await readFile(settingsFile, "utf8"));
 	expect(saved.theme).toBe("dark");
 	expect(saved.compaction.keepRecentTokens).toBe(12_345);
 	expect(saved.compaction.modelOverrides["fake/fake-fast"].reserveTokens).toBe(24_000);
-
-	await page.getByTestId("compaction-toggle").click();
-	await expect(page.getByTestId("compaction-toggle")).toHaveAttribute("aria-checked", "false");
-	saved = JSON.parse(await readFile(settingsFile, "utf8"));
-	expect(saved.compaction.enabled).toBe(false);
 
 	await page.getByTestId("compaction-default").click();
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
@@ -316,6 +315,7 @@ test("Ctrl+Enter setting is honoured and persisted", async () => {
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
 
 	await page.locator("#settingsButton").click();
+	await expect(page.locator("#settingsMenu")).not.toContainText("Enter は改行");
 	const toggle = page.getByTestId("ctrl-enter-toggle");
 	await expect(toggle).toHaveAttribute("aria-checked", "true");
 	await toggle.click();
@@ -840,6 +840,16 @@ test("shows the current run elapsed time and keeps it across reloads", async () 
 
 	await expectDone();
 	await expect(page.getByTestId("run-elapsed")).toHaveCount(0);
+});
+
+test("shows edited line counts while the agent runs", async () => {
+	await send("edit please");
+	const diff = page.getByTestId("run-diff");
+	await expect(diff).toBeVisible({ timeout: 10_000 });
+	await expect(diff.locator(".add")).toHaveText("+2");
+	await expect(diff.locator(".del")).toHaveText("-1");
+	await expectDone();
+	await expect(diff).toHaveCount(0);
 });
 
 test("sanitises model HTML", async () => {
