@@ -464,6 +464,22 @@ async function promptInner(message, images = []) {
 		return;
 	}
 
+	if (message.includes("dupe")) {
+		let { calls } = await streamAssistant([
+			{ type: "thinking", text: "最初のコマンドを実行します。" },
+			{ type: "toolCall", name: "bash", args: { command: "echo first" } },
+		]);
+		for (const call of calls) await runTool(call);
+		({ calls } = await streamAssistant([
+			{ type: "thinking", text: "続けて同じ種類と別の種類を実行します。" },
+			{ type: "toolCall", name: "bash", args: { command: "echo second" } },
+			{ type: "toolCall", name: "read", args: { path: "src/app.js" } },
+		]));
+		for (const call of calls) await runTool(call);
+		await streamAssistant([{ type: "text", text: "重複をまとめました。" }]);
+		return;
+	}
+
 	if (message.includes("slowwork")) {
 		const { calls } = await streamAssistant(
 			[

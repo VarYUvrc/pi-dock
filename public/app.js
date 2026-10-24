@@ -2,7 +2,9 @@ import { escapeHtml, renderMarkdown } from "./markdown.js";
 
 const TOKEN = new URLSearchParams(location.search).get("token") ?? "";
 const STORAGE_KEY = "pi-dock:settings";
-const DEFAULT_SETTINGS = { ctrlEnterSend: true, theme: "system" };
+const DEFAULT_SETTINGS = { ctrlEnterSend: true, theme: "system", planWidth: 284 };
+const PLAN_MIN_WIDTH = 220;
+const PLAN_MAX_WIDTH = 640;
 const THEMES = ["system", "light", "dark"];
 const MAX_TOOL_OUTPUT = 40_000;
 
@@ -20,6 +22,7 @@ const dom = {
 	attachments: $("attachments"),
 	sendMode: $("sendMode"),
 	planPanel: $("planPanel"),
+	planResizer: $("planResizer"),
 	planTitle: $("planTitle"),
 	planItems: $("planItems"),
 	queueBadge: $("queueBadge"),
@@ -142,6 +145,7 @@ function loadSettings() {
 			...DEFAULT_SETTINGS,
 			ctrlEnterSend: parsed.ctrlEnterSend !== false,
 			theme: THEMES.includes(parsed.theme) ? parsed.theme : "system",
+			planWidth: Number.isFinite(parsed.planWidth) ? parsed.planWidth : DEFAULT_SETTINGS.planWidth,
 		};
 	} catch {
 		return { ...DEFAULT_SETTINGS };
@@ -152,7 +156,11 @@ function saveSettings() {
 	try {
 		localStorage.setItem(
 			STORAGE_KEY,
-			JSON.stringify({ ctrlEnterSend: settings.ctrlEnterSend, theme: settings.theme }),
+			JSON.stringify({
+				ctrlEnterSend: settings.ctrlEnterSend,
+				theme: settings.theme,
+				planWidth: settings.planWidth,
+			}),
 		);
 	} catch {
 		/* storage may be unavailable */
@@ -1327,7 +1335,55 @@ window.addEventListener("resize", () => {
 	if (state.menu) closeMenus();
 	if (state.commandMenu) closeCommandMenu();
 	if (window.innerWidth > 1040) closePlanDrawer();
+	setPlanWidth(settings.planWidth, { commit: false });
 });
+
+function clampPlanWidth(width) {
+	const workspace = dom.planPanel?.parentElement;
+	const available = workspace?.getBoundingClientRect().width ?? window.innerWidth;
+	const max = Math.max(PLAN_MIN_WIDTH, Math.min(PLAN_MAX_WIDTH, available - 360));
+	return Math.round(Math.min(max, Math.max(PLAN_MIN_WIDTH, width)));
+}
+
+function setPlanWidth(width, { save = false, commit = true } = {}) {
+	const next = clampPlanWidth(width);
+	dom.planPanel.style.setProperty("--plan-width", `${next}px`);
+	if (dom.planResizer) {
+		dom.planResizer.setAttribute("aria-valuenow", String(next));
+		dom.planResizer.setAttribute("aria-valuemin", String(PLAN_MIN_WIDTH));
+		dom.planResizer.setAttribute("aria-valuemax", String(PLAN_MAX_WIDTH));
+	}
+	if (commit) settings.planWidth = next;
+	if (save) saveSettings();
+}
+
+function initPlanResizer() {
+	if (!dom.planResizer) return;
+	let drag = null;
+	const endDrag = (event) => {
+		if (!drag || event.pointerId !== drag) return;
+		drag = null;
+		document.body.classList.remove("resizing-plan");
+		if (dom.planResizer.hasPointerCapture?.(event.pointerId)) {
+			dom.planResizer.releasePointerCapture(event.pointerId);
+		}
+		saveSettings();
+	};
+	dom.planResizer.addEventListener("pointerdown", (event) => {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		drag = event.pointerId;
+		dom.planResizer.setPointerCapture?.(event.pointerId);
+		document.body.classList.add("resizing-plan");
+	});
+	dom.planResizer.addEventListener("pointermove", (event) => {
+		if (!drag || event.pointerId !== drag) return;
+		const workspace = dom.planPanel.parentElement?.getBoundingClientRect();
+		setPlanWidth((workspace?.right ?? window.innerWidth) - event.clientX);
+	});
+	dom.planResizer.addEventListener("pointerup", endDrag);
+	dom.planResizer.addEventListener("pointercancel", endDrag);
+}
 
 /* -------------------------------------------------------------- slash menu */
 
@@ -2606,6 +2662,48 @@ function workHeading(items, status) {
 	return status === "error" ? "エラー" : "作業";
 }
 
+function toolKind(name) {
+	const value = String(name ?? "").toLowerCase();
+	if (/edit|patch|replace/.test(value)) return "edit";
+	if (/write|create_file|createfile|save_file/.test(value)) return "write";
+	if (/read|view|cat|head|tail/.test(value)) return "read";
+	if (/bash|shell|command|exec|terminal|process|run/.test(value)) return "command";
+	if (/web|fetch|http|browse|url/.test(value)) return "web";
+	if (/grep|search|glob|find|query/.test(value)) return "search";
+	if (/list|tree|^ls\b/.test(value)) return "list";
+	if (/image|screenshot|photo|vision/.test(value)) return "image";
+	if (/plan|todo/.test(value)) return "plan";
+	if (/task|agent|subagent/.test(value)) return "agent";
+	return "tool";
+}
+
+const TOOL_KIND_LABELS = {
+	read: "読み取り",
+	edit: "編集",
+	write: "書き込み",
+	command: "コマンド",
+	web: "Web",
+	search: "検索",
+	list: "一覧",
+	image: "画像",
+	plan: "計画",
+	agent: "エージェント",
+	tool: "ツール",
+};
+
+function workToolKinds(items) {
+	const seen = new Set();
+	const kinds = [];
+	for (const item of items) {
+		if (item.kind !== "tool") continue;
+		const kind = toolKind(item.tool?.name);
+		if (seen.has(kind)) continue;
+		seen.add(kind);
+		kinds.push(kind);
+	}
+	return kinds;
+}
+
 function workMarkup(items, key, prefix) {
 	const status = workStatus(items);
 	const label = workHeading(items, status);
@@ -2615,6 +2713,14 @@ function workMarkup(items, key, prefix) {
 	const rail = shown
 		.map((value) => `<i class="work-dot ${value}"></i>`)
 		.join("");
+	const kinds = workToolKinds(items);
+	const tools = kinds.length
+		? `<span class="work-tools" title="${escapeHtml(
+				kinds.map((kind) => TOOL_KIND_LABELS[kind] ?? kind).join("・"),
+			)}" aria-hidden="true">${kinds
+				.map((kind) => `<svg class="icon"><use href="#i-${kind}"/></svg>`)
+				.join("")}</span>`
+		: "";
 	const body = items
 		.map((item) => {
 			if (item.kind === "thinking") {
@@ -2634,6 +2740,7 @@ function workMarkup(items, key, prefix) {
 		<summary>
 			<span class="work-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
 			<span class="work-rail" aria-hidden="true">${rail}</span>
+			${tools}
 			${status === "error" ? '<svg class="icon work-alert" aria-hidden="true"><use href="#i-alert"/></svg>' : ""}
 			<svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg>
 		</summary>
@@ -3073,6 +3180,8 @@ for (const container of [dom.messageList, dom.liveMount]) {
 
 async function boot() {
 	applyTheme();
+	setPlanWidth(settings.planWidth);
+	initPlanResizer();
 	renderChrome();
 	renderLive();
 	renderPlan();

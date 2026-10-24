@@ -173,6 +173,36 @@ test("groups multiple tools into a stable work rail and keeps failures visible",
 	await expect(failed.getByTestId("tool").first()).toContainText("exit 1");
 });
 
+test("dedupes tool kinds and keeps consecutive work cards compact", async () => {
+	await send("dupe");
+	await expect(page.getByTestId("message-assistant").last()).toContainText(
+		"重複をまとめました。",
+		{ timeout: 10_000 },
+	);
+	await expectDone();
+
+	const groups = page.getByTestId("work-group");
+	await expect(groups).toHaveCount(2);
+	await expect(groups.first().locator(".work-tools use")).toHaveCount(1);
+	const kinds = await groups
+		.last()
+		.locator(".work-tools use")
+		.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("href")));
+	expect(kinds).toHaveLength(2);
+	expect(new Set(kinds).size).toBe(2);
+	expect(kinds).toContain("#i-command");
+	expect(kinds).toContain("#i-read");
+
+	const gap = await page.evaluate(() => {
+		const [first, second] = document.querySelectorAll(".message-list > .assistant");
+		return Math.round(
+			second.getBoundingClientRect().top - first.getBoundingClientRect().bottom,
+		);
+	});
+	expect(gap).toBeGreaterThan(8);
+	expect(gap).toBeLessThan(20);
+});
+
 test("uses reasoning as the work heading and falls back quietly", async () => {
 	await send("reason");
 	await expect(page.getByTestId("message-assistant").last()).toContainText("理由を確認しました。", {
@@ -335,7 +365,7 @@ test("Ctrl+Enter setting is honoured and persisted", async () => {
 	const writes = await page.evaluate(() => window.__storageWrites);
 	expect(writes).toBe(1);
 	const stored = await page.evaluate(() => localStorage.getItem("pi-dock:settings"));
-	expect(JSON.parse(stored)).toEqual({ ctrlEnterSend: false, theme: "system" });
+	expect(JSON.parse(stored)).toEqual({ ctrlEnterSend: false, theme: "system", planWidth: 284 });
 
 	await page.reload();
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
@@ -575,6 +605,23 @@ test("keeps the plan on the right and only shows the current plan", async () => 
 	await expect(page.getByTestId("plan-item")).toHaveCount(5);
 	await expect(page.getByTestId("plan-item").last()).toHaveAttribute("data-status", "pending");
 	await expectDone();
+});
+
+test("resizes the plan panel by dragging its edge", async () => {
+	const panel = page.locator("#planPanel");
+	const initial = (await panel.boundingBox()).width;
+	const handle = await page.locator("#planResizer").boundingBox();
+	const x = handle.x + handle.width / 2;
+	const y = handle.y + handle.height / 2;
+	await page.mouse.move(x, y);
+	await page.mouse.down();
+	await page.mouse.move(x - 90, y, { steps: 5 });
+	await page.mouse.up();
+	await expect.poll(async () => (await panel.boundingBox()).width).toBeGreaterThan(initial + 60);
+	const stored = await page.evaluate(
+		() => JSON.parse(localStorage.getItem("pi-dock:settings")).planWidth,
+	);
+	expect(stored).toBeGreaterThan(initial + 60);
 });
 
 test("opens the plan in a drawer on narrow screens", async () => {

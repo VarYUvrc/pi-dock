@@ -428,7 +428,7 @@ a:focus-visible {
 
 .plan-panel {
 	flex: none;
-	width: 284px;
+	width: var(--plan-width, 284px);
 	min-width: 0;
 	overflow-y: auto;
 	overscroll-behavior: contain;
@@ -447,6 +447,38 @@ a:focus-visible {
 	background: var(--line-strong);
 	border-radius: 8px;
 	border: 2px solid var(--bg);
+}
+
+.plan-resizer {
+	position: relative;
+	z-index: 1;
+	flex: none;
+	width: 9px;
+	margin: 0 -4px;
+	cursor: col-resize;
+	touch-action: none;
+}
+
+.plan-resizer::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 4px;
+	width: 1px;
+	background: transparent;
+	transition: background 0.15s ease;
+}
+
+.plan-resizer:hover::after,
+body.resizing-plan .plan-resizer::after {
+	background: var(--accent);
+}
+
+body.resizing-plan,
+body.resizing-plan * {
+	cursor: col-resize !important;
+	user-select: none !important;
 }
 
 .plan-head {
@@ -617,7 +649,11 @@ a:focus-visible {
 .message-list {
 	display: flex;
 	flex-direction: column;
-	gap: 28px;
+	gap: 14px;
+}
+
+.message-list > .user:not(:first-child) {
+	margin-top: 14px;
 }
 
 .message-list:empty {
@@ -627,7 +663,7 @@ a:focus-visible {
 #liveMount {
 	display: flex;
 	flex-direction: column;
-	gap: 28px;
+	gap: 14px;
 }
 
 #liveMount:empty {
@@ -1002,6 +1038,19 @@ a:focus-visible {
 	width: 82px;
 	flex: none;
 	overflow: hidden;
+}
+
+.work-tools {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	flex: none;
+	color: var(--text-3);
+}
+
+.work-tools .icon {
+	width: 13px;
+	height: 13px;
 }
 
 .work-dot {
@@ -2457,6 +2506,10 @@ a:focus-visible {
 
 	.plan-panel .plan-close {
 		display: grid;
+	}
+
+	.plan-resizer {
+		display: none;
 	}
 
 	.plan-panel {
