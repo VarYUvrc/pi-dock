@@ -5,8 +5,10 @@ on:
     types: [published]
   workflow_dispatch:
 
-# Requires an npm granular access token stored as NPM_TOKEN in the `npm`
-# GitHub environment. Provenance is generated through the OIDC token below.
+# Publishes through npm Trusted Publishing (OIDC). No NPM_TOKEN secret is
+# stored; configure the trusted publisher on npm for this repository, the
+# publish.yml workflow, and the `npm` environment. Provenance uses the OIDC
+# token below.
 permissions:
   contents: read
   id-token: write
@@ -22,6 +24,8 @@ jobs:
           node-version: "22.19.0"
           registry-url: "https://registry.npmjs.org"
           cache: npm
+      # Node 22.19 ships npm 10, while Trusted Publishing needs npm 11.5.1+.
+      - run: npm install -g npm@^11.5.1
       - name: Verify the release tag matches package.json
         if: github.event_name == 'release'
         run: |
@@ -38,5 +42,3 @@ jobs:
       # prepublishOnly runs lint, typecheck, i18n, the real-Pi integration test,
       # and the tarball check before anything is uploaded.
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
