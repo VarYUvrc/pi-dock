@@ -9,6 +9,7 @@ import { dirname, extname, join } from "node:path";
 
 const HEAD_BYTES = 32 * 1024;
 const TAIL_BYTES = 8 * 1024;
+const READ_CONCURRENCY = 8;
 
 export function agentDir(env = process.env) {
 	return env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
@@ -85,6 +86,53 @@ function summarize(records, info) {
 }
 
 /**
+ * Read the parts of a session file needed for the history list with a single
+ * handle. Reading many files two times each made opening history unnecessarily
+ * I/O heavy.
+ */
+async function readRecordChunks(path, size) {
+	const handle = await open(path, "r");
+	try {
+		const records = [];
+		const headLength = Math.min(size, HEAD_BYTES);
+		if (headLength > 0) {
+			const head = Buffer.alloc(headLength);
+			const { bytesRead } = await handle.read(head, 0, headLength, 0);
+			records.push(...parseLines(head.subarray(0, bytesRead).toString("utf8")));
+		}
+		if (size > HEAD_BYTES) {
+			const tailLength = Math.min(size, TAIL_BYTES);
+			const tail = Buffer.alloc(tailLength);
+			const { bytesRead } = await handle.read(tail, 0, tailLength, size - tailLength);
+			records.push(
+				...parseLines(tail.subarray(0, bytesRead).toString("utf8"), {
+					skipPartialFirst: true,
+				}),
+			);
+		}
+		return records;
+	} finally {
+		await handle.close();
+	}
+}
+
+/** Run async work over many files without opening all of them at once. */
+async function mapLimit(items, limit, mapper) {
+	const results = new Array(items.length);
+	let next = 0;
+	const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+		while (true) {
+			const index = next;
+			next += 1;
+			if (index >= items.length) return;
+			results[index] = await mapper(items[index], index);
+		}
+	});
+	await Promise.all(workers);
+	return results;
+}
+
+/**
  * List regular .jsonl files directly under the current project's Pi session
  * directory. Symlinks are ignored so a delete request can never escape it.
  */
@@ -117,39 +165,24 @@ async function sessionFiles(cwd, env) {
 export async function listSessions({ cwd, currentId, env = process.env }) {
 	const { files } = await sessionFiles(cwd, env);
 
-	const sessions = await Promise.all(
-		files.map(async (candidate) => {
-			const info = { id: "", cwd: "", created: "", name: "", preview: "" };
-			try {
-				const head = await readChunk(
-					candidate.path,
-					0,
-					Math.min(candidate.size, HEAD_BYTES),
-				);
-				summarize(parseLines(head), info);
-				if (candidate.size > HEAD_BYTES) {
-					const tail = await readChunk(
-						candidate.path,
-						Math.max(0, candidate.size - TAIL_BYTES),
-						TAIL_BYTES,
-					);
-					summarize(parseLines(tail, { skipPartialFirst: true }), info);
-				}
-			} catch {
-				return null;
-			}
-			return {
-				path: candidate.path,
-				id: info.id,
-				name: info.name,
-				preview: info.preview,
-				created: info.created,
-				modified: new Date(candidate.modified).toISOString(),
-				size: candidate.size,
-				current: Boolean(currentId) && info.id === currentId,
-			};
-		}),
-	);
+	const sessions = await mapLimit(files, READ_CONCURRENCY, async (candidate) => {
+		const info = { id: "", cwd: "", created: "", name: "", preview: "" };
+		try {
+			summarize(await readRecordChunks(candidate.path, candidate.size), info);
+		} catch {
+			return null;
+		}
+		return {
+			path: candidate.path,
+			id: info.id,
+			name: info.name,
+			preview: info.preview,
+			created: info.created,
+			modified: new Date(candidate.modified).toISOString(),
+			size: candidate.size,
+			current: Boolean(currentId) && info.id === currentId,
+		};
+	});
 
 	return sessions.filter(Boolean);
 }

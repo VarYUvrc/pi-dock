@@ -7,6 +7,8 @@ const PLAN_MIN_WIDTH = 220;
 const PLAN_MAX_WIDTH = 640;
 const THEMES = ["system", "light", "dark"];
 const MAX_TOOL_OUTPUT = 40_000;
+const LIVE_RENDER_MS = 250;
+const HISTORY_PAGE = 50;
 
 const $ = (id) => document.getElementById(id);
 const dom = {
@@ -100,6 +102,10 @@ const state = {
 	live: null,
 	tools: {},
 	toolRev: {},
+	toolResults: new Map(),
+	toolCalls: new Set(),
+	toolResultIds: new Set(),
+	pendingUser: null,
 	stats: null,
 	contextUsage: null,
 	compaction: null,
@@ -107,15 +113,18 @@ const state = {
 	queue: { steering: [], followUp: [] },
 	statuses: {},
 	widgets: {},
+	extensionTitle: "",
 	dialogs: [],
 	localDialog: null,
 	sessions: [],
 	sessionTotal: 0,
+	historyLimit: HISTORY_PAGE,
 	historySelection: null,
 	menu: null,
 	slash: null,
 	commandMenu: null,
 	sendMode: "steer",
+	compactingRequest: false,
 };
 
 const openKeys = new Set();
@@ -123,7 +132,7 @@ const messageNodes = new Map();
 const listeners = { extTimers: new WeakMap() };
 
 let stickToBottom = true;
-let liveFrame = 0;
+let liveTimer = 0;
 let messagesFrame = 0;
 let statsTimer = 0;
 let statsPoll = 0;
@@ -133,6 +142,7 @@ let statsGeneration = 0;
 let elapsedTimer = 0;
 let composing = false;
 let compositionEndedAt = Number.NEGATIVE_INFINITY;
+let dialogReturnFocus = null;
 
 /* ------------------------------------------------------------------ setup */
 
@@ -253,8 +263,11 @@ async function refreshSnapshot() {
 	state.levels = snapshot.levels?.length ? snapshot.levels : ["off"];
 	state.commands = snapshot.commands ?? [];
 	state.plan = snapshot.plan ?? null;
-	state.attachments = [];
-	renderAttachments();
+	state.statuses =
+		snapshot.statuses && typeof snapshot.statuses === "object" ? { ...snapshot.statuses } : {};
+	state.widgets =
+		snapshot.widgets && typeof snapshot.widgets === "object" ? { ...snapshot.widgets } : {};
+	state.extensionTitle = snapshot.extensionTitle ?? "";
 	state.live = snapshot.live?.blocks?.length
 		? { blocks: snapshot.live.blocks, tools: snapshot.live.tools ?? {} }
 		: null;
@@ -263,10 +276,13 @@ async function refreshSnapshot() {
 	for (const tool of Object.values(snapshot.live?.tools ?? {})) {
 		state.tools[tool.id] = tool;
 	}
+	rebuildMessageIndex();
+	state.pendingUser = null;
 	state.queue = { steering: [], followUp: [] };
 	state.retry = null;
 	state.diff = diffFromTools(state.tools);
 	state.aborting = false;
+	state.compactingRequest = false;
 	state.ready = true;
 	state.piDown = "";
 	state.authError = "";
@@ -281,6 +297,8 @@ async function refreshSnapshot() {
 	renderPlan();
 	renderRunStatus();
 	renderDialog();
+	if (state.running || state.compacting || state.retry) startStatsPolling();
+	else stopStatsPolling();
 	for (const request of snapshot.pendingUi ?? []) {
 		onExtensionUi({ ...request, runtime: state.runtimeId });
 	}
@@ -300,22 +318,40 @@ function handleRecord(record) {
 	switch (record.type) {
 		case "dock:hello":
 			return;
-		case "dock:runtime":
-			for (const session of state.sessions) {
-				if (session.runtime !== record.runtime.id) continue;
-				session.running = record.runtime.running;
-				if (record.runtime.sessionName) session.name = record.runtime.sessionName;
+		case "dock:runtime": {
+			const info = record.runtime;
+			state.sessions = state.sessions.flatMap((session) => {
+				if (session.runtime !== info.id) return [session];
+				if (info.exited && !session.path) return [];
+				return [
+					{
+						...session,
+						running: info.running,
+						...(info.sessionName ? { name: info.sessionName } : {}),
+						...(info.exited ? { runtime: null, live: false, running: false } : {}),
+					},
+				];
+			});
+			if (!dom.historyPanel.hidden) {
+				renderSessionList();
+				if (info.exited) loadSessions().catch(() => {});
 			}
-			if (!dom.historyPanel.hidden) renderSessionList();
 			return;
+		}
 		case "dock:exit":
 			state.piDown = record.reason ?? "Pi との接続が切れました";
 			state.running = false;
 			state.runStartedAt = null;
 			state.compacting = false;
+			state.compactingRequest = false;
 			state.contextUsage = null;
 			state.live = null;
 			state.aborting = false;
+			state.pendingUser = null;
+			state.statuses = {};
+			state.widgets = {};
+			state.extensionTitle = "";
+			clearDialogs();
 			stopStatsPolling();
 			stopElapsedTimer();
 			renderChrome();
@@ -341,7 +377,7 @@ function handleRecord(record) {
 			startStatsPolling();
 			renderChrome();
 			renderRunStatus();
-			scheduleLive();
+			scheduleLive(true);
 			return;
 		case "agent_end":
 			return;
@@ -353,12 +389,11 @@ function handleRecord(record) {
 			state.sendMode = "steer";
 			state.live = null;
 			state.tools = {};
-			state.toolRev = {};
 			stopStatsPolling();
 			stopElapsedTimer();
 			renderChrome();
 			renderRunStatus();
-			scheduleLive();
+			scheduleLive(true);
 			renderMessages();
 			scheduleStats();
 			return;
@@ -433,7 +468,7 @@ function onMessageStart(message) {
 		renderMessages();
 	} else if (message.role === "assistant") {
 		state.live = { blocks: [], tools: state.tools };
-		scheduleLive();
+		scheduleLive(true);
 	}
 }
 
@@ -443,12 +478,16 @@ function onMessageUpdate(update) {
 	const blocks = state.live.blocks;
 	const index = update.contentIndex ?? 0;
 	const current = blocks[index];
+	let immediate = false;
 	switch (update.type) {
 		case "text_start":
 			blocks[index] = { type: "text", text: "" };
 			break;
 		case "text_delta":
-			if (current?.type === "text") current.text += update.delta;
+			if (current?.type === "text") {
+				immediate = !current.text;
+				current.text += update.delta;
+			}
 			break;
 		case "text_end":
 			blocks[index] = { type: "text", text: update.content ?? "" };
@@ -457,7 +496,10 @@ function onMessageUpdate(update) {
 			blocks[index] = { type: "thinking", thinking: "" };
 			break;
 		case "thinking_delta":
-			if (current?.type === "thinking") current.thinking += update.delta;
+			if (current?.type === "thinking") {
+				immediate = !current.thinking;
+				current.thinking += update.delta;
+			}
 			break;
 		case "thinking_end":
 			blocks[index] = { type: "thinking", thinking: update.content ?? "" };
@@ -470,9 +512,13 @@ function onMessageUpdate(update) {
 				arguments: {},
 				partialArgs: "",
 			};
+			immediate = true;
 			break;
 		case "toolcall_delta":
-			if (current?.type === "toolCall") current.partialArgs += update.delta;
+			if (current?.type === "toolCall") {
+				immediate = !current.partialArgs;
+				current.partialArgs += update.delta;
+			}
 			break;
 		case "toolcall_end":
 			blocks[index] = {
@@ -485,8 +531,7 @@ function onMessageUpdate(update) {
 		default:
 			return;
 	}
-	scheduleLive();
-	scrollToBottom();
+	scheduleLive(immediate);
 }
 
 function onMessageEnd(message) {
@@ -498,13 +543,14 @@ function onMessageEnd(message) {
 		if (!(last?.role === "assistant" && last.timestamp === message.timestamp)) {
 			state.messages.push(message);
 		}
+		indexMessage(message);
 		state.live = null;
-		scheduleLive();
+		scheduleLive(true);
 	} else if (message.role === "toolResult") {
-		const exists = state.messages.some(
-			(item) => item.role === "toolResult" && item.toolCallId === message.toolCallId,
-		);
-		if (!exists) state.messages.push(message);
+		if (!state.toolResultIds.has(message.toolCallId)) {
+			state.messages.push(message);
+			indexMessage(message);
+		}
 	} else if (["bashExecution", "compactionSummary", "branchSummary", "custom"].includes(message.role)) {
 		state.messages.push(message);
 	}
@@ -522,22 +568,59 @@ function textOfContent(content) {
 		.join("\n");
 }
 
+function imageSignature(block) {
+	const data = typeof block?.data === "string" ? block.data : "";
+	return `${block?.mimeType ?? ""}:${data.length}:${data.slice(0, 32)}:${data.slice(-32)}`;
+}
+
+function messageKey(message) {
+	const images = Array.isArray(message?.content)
+		? message.content.filter((block) => block?.type === "image").map(imageSignature)
+		: [];
+	return `${textOfContent(message?.content)}\u0000${images.join("\u0001")}`;
+}
+
+function indexMessage(message) {
+	if (!message) return;
+	if (message.role === "toolResult" && message.toolCallId) {
+		state.toolResults.set(message.toolCallId, message);
+		state.toolResultIds.add(message.toolCallId);
+	}
+	if (message.role === "assistant" && Array.isArray(message.content)) {
+		for (const block of message.content) {
+			if (block?.type === "toolCall" && block.id) state.toolCalls.add(block.id);
+		}
+	}
+}
+
+function rebuildMessageIndex() {
+	state.toolResults.clear();
+	state.toolCalls.clear();
+	state.toolResultIds.clear();
+	for (const message of state.messages) indexMessage(message);
+}
+
+function messageContext() {
+	return { results: state.toolResults, calls: state.toolCalls };
+}
+
 function onUserMessage(message, { start = false } = {}) {
 	hideCompletedPlanForNewTurn();
-	for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+	const key = messageKey(message);
+	for (let index = 0; index < state.messages.length; index += 1) {
 		const item = state.messages[index];
-		if (item.role === "user" && item._optimistic) {
+		if (item.role === "user" && item._optimistic && messageKey(item) === key) {
 			state.messages[index] = { ...message, _optimistic: false };
-			state.pendingUser = start ? textOfContent(message.content) : null;
+			state.pendingUser = start ? key : null;
 			return;
 		}
 	}
-	if (!start && state.pendingUser !== null && state.pendingUser === textOfContent(message.content)) {
+	if (!start && state.pendingUser !== null && state.pendingUser === key) {
 		state.pendingUser = null;
 		return;
 	}
 	state.messages.push(message);
-	state.pendingUser = start ? textOfContent(message.content) : null;
+	state.pendingUser = start ? key : null;
 }
 
 function onToolEvent(record) {
@@ -568,7 +651,8 @@ function onToolEvent(record) {
 		scheduleStats(900);
 	}
 	state.toolRev[id] = (state.toolRev[id] ?? 0) + 1;
-	scheduleLive();
+	if (record.type === "tool_execution_end") scheduleLive(true);
+	else scheduleLive();
 	scheduleMessages();
 }
 
@@ -674,7 +758,8 @@ function onExtensionUi(request) {
 			return;
 		}
 		case "setTitle":
-			document.title = request.title || "Pi-dock";
+			state.extensionTitle = request.title || "";
+			renderChrome();
 			return;
 		case "set_editor_text":
 			if (typeof request.text === "string") {
@@ -721,6 +806,16 @@ function respondDialog(request, response) {
 	});
 }
 
+function clearDialogs() {
+	for (const request of state.dialogs) {
+		const timer = listeners.extTimers.get(request);
+		if (timer) clearTimeout(timer);
+		listeners.extTimers.delete(request);
+	}
+	state.dialogs = [];
+	renderDialog();
+}
+
 function closeLocalDialog() {
 	state.localDialog = null;
 	renderDialog();
@@ -752,18 +847,23 @@ function renderLocalDialog(dialog) {
 	);
 	parts.push(actions);
 	dom.dialog.replaceChildren(...parts);
-	dom.dialog.querySelector(".btn.primary, .btn.danger, .btn")?.focus();
+	const preferred = dom.dialog.querySelector(dialog.danger ? ".btn.danger" : ".btn.primary");
+	(preferred ?? dom.dialog.querySelector(".btn"))?.focus();
 }
 
 function renderDialog() {
-	if (state.localDialog) {
-		renderLocalDialog(state.localDialog);
-		return;
-	}
 	const request = state.dialogs[0];
-	if (!request) {
+	if (!state.localDialog && !request) {
+		const restore = dialogReturnFocus;
+		dialogReturnFocus = null;
 		dom.dialogLayer.hidden = true;
 		dom.dialog.replaceChildren();
+		if (restore?.isConnected) restore.focus();
+		return;
+	}
+	if (dom.dialogLayer.hidden) dialogReturnFocus = document.activeElement;
+	if (state.localDialog) {
+		renderLocalDialog(state.localDialog);
 		return;
 	}
 	dom.dialogLayer.hidden = false;
@@ -833,9 +933,30 @@ function renderDialog() {
 	}
 
 	dom.dialog.replaceChildren(...parts);
-	const focusable = dom.dialog.querySelector("input, textarea, .btn.option, .btn.primary, .btn");
+	const focusable =
+		dom.dialog.querySelector("input, textarea, .btn.primary, .btn.option") ??
+		dom.dialog.querySelector(".btn");
 	focusable?.focus();
 }
+
+dom.dialogLayer.addEventListener("keydown", (event) => {
+	if (event.key !== "Tab") return;
+	const focusable = [
+		...dom.dialog.querySelectorAll(
+			'button, input, textarea, select, a[href], [tabindex]:not([tabindex="-1"])',
+		),
+	].filter((element) => !element.disabled && element.offsetParent !== null);
+	if (!focusable.length) return;
+	const first = focusable[0];
+	const last = focusable[focusable.length - 1];
+	if (event.shiftKey && document.activeElement === first) {
+		event.preventDefault();
+		last.focus();
+	} else if (!event.shiftKey && document.activeElement === last) {
+		event.preventDefault();
+		first.focus();
+	}
+});
 
 function button(label, className, onClick, testId) {
 	const element = document.createElement("button");
@@ -919,8 +1040,9 @@ async function send() {
 			state.attachments = restore;
 			renderAttachments();
 		}
+		const failedKey = messageKey({ content });
 		const index = state.messages.findIndex(
-			(message) => message._optimistic && textOfContent(message.content) === text,
+			(message) => message._optimistic && messageKey(message) === failedKey,
 		);
 		if (index !== -1) state.messages.splice(index, 1);
 		renderMessages();
@@ -971,6 +1093,7 @@ async function newChat() {
 			toast("新しい会話はキャンセルされました", "warning");
 			return;
 		}
+		clearAttachments();
 		await refreshSnapshot();
 		if (wasRunning) toast("前の会話はバックグラウンドで継続します");
 		dom.input.focus();
@@ -986,6 +1109,7 @@ async function switchSession(path) {
 			toast("切り替えはキャンセルされました", "warning");
 			return;
 		}
+		clearAttachments();
 		closeHistory();
 		await refreshSnapshot();
 		dom.input.focus();
@@ -997,6 +1121,7 @@ async function switchSession(path) {
 async function activateSession(runtimeId) {
 	try {
 		await api({ type: "dock:activate", runtimeId });
+		clearAttachments();
 		closeHistory();
 		await refreshSnapshot();
 		dom.input.focus();
@@ -1023,6 +1148,27 @@ async function setThinkingLevel(level) {
 		await api({ type: "set_thinking_level", level });
 	} catch (error) {
 		toast(error.message, "error");
+	}
+}
+
+async function compactContext() {
+	if (state.running) throw new Error("実行中は圧縮できません");
+	if (state.compactingRequest) throw new Error("圧縮処理中です");
+	state.compactingRequest = true;
+	state.compacting = true;
+	renderChrome();
+	renderRunStatus();
+	if (state.menu === "context") renderContextMenu();
+	try {
+		await api({ type: "compact" });
+		await refreshSnapshot();
+		toast("コンテキストを圧縮しました");
+	} finally {
+		state.compactingRequest = false;
+		if (!state.running) state.compacting = false;
+		renderChrome();
+		renderRunStatus();
+		if (state.menu === "context") renderContextMenu();
 	}
 }
 
@@ -1404,6 +1550,18 @@ function initPlanResizer() {
 	});
 	dom.planResizer.addEventListener("pointerup", endDrag);
 	dom.planResizer.addEventListener("pointercancel", endDrag);
+	dom.planResizer.addEventListener("keydown", (event) => {
+		const delta = event.key === "ArrowLeft" ? 16 : event.key === "ArrowRight" ? -16 : 0;
+		if (delta === 0 && event.key !== "Home" && event.key !== "End") return;
+		event.preventDefault();
+		const next =
+			event.key === "Home"
+				? PLAN_MIN_WIDTH
+				: event.key === "End"
+					? PLAN_MAX_WIDTH
+					: settings.planWidth + delta;
+		setPlanWidth(next, { save: true });
+	});
 }
 
 /* -------------------------------------------------------------- slash menu */
@@ -1426,10 +1584,7 @@ const DOCK_COMMANDS = [
 		description: "コンテキストを圧縮",
 		source: "dock",
 		run: async () => {
-			if (state.running) throw new Error("実行中は圧縮できません");
-			await api({ type: "compact" });
-			await refreshSnapshot();
-			toast("コンテキストを圧縮しました");
+			await compactContext();
 		},
 	},
 	{
@@ -1845,6 +2000,8 @@ function closeMenus() {
 	dom.contextMenu.hidden = true;
 	dom.modelButton.removeAttribute("aria-expanded");
 	dom.thinkingButton.removeAttribute("aria-expanded");
+	dom.settingsButton.removeAttribute("aria-expanded");
+	dom.contextButton.removeAttribute("aria-expanded");
 	state.menu = null;
 }
 
@@ -1975,6 +2132,11 @@ function renderContextMenu() {
 	];
 	if (cost) rows.push(["コスト", `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`]);
 	const pressed = (value) => thresholdPercent !== null && thresholdPercent === value;
+	const projectNote = compaction?.projectOverridesReserve
+		? `<div class="compaction-note" data-testid="compaction-project-note" title="${escapeHtml(
+				compaction.projectSettingsPath ?? "",
+			)}">プロジェクト設定が優先</div>`
+		: "";
 	dom.contextMenu.innerHTML =
 		rows
 			.map(
@@ -1990,8 +2152,9 @@ function renderContextMenu() {
 				<button type="button" data-compaction-clear data-testid="compaction-default">既定</button>
 			</div>
 		</div>
+		${projectNote}
 		${compactionMeterMarkup(usedTokens, thresholdTokens)}` +
-		(state.running || state.compacting
+		(state.running || state.compacting || state.compactingRequest
 			? ""
 			: `<div class="setting-row compaction-row">
 				<span>手動圧縮</span>
@@ -2080,7 +2243,14 @@ dom.contextMenu.addEventListener("click", async (event) => {
 			if (result?.compaction) state.compaction = result.compaction;
 			renderChrome();
 			renderContextMenu();
-			toast(`自動圧縮を ${percentButton.dataset.compactionPercent}% に設定しました`);
+			if (result?.compaction?.projectOverridesReserve) {
+				toast(
+					`ユーザー設定に保存しました（プロジェクト設定が優先）`,
+					"warning",
+				);
+			} else {
+				toast(`自動圧縮を ${percentButton.dataset.compactionPercent}% に設定しました`);
+			}
 		} catch (error) {
 			toast(error.message, "error");
 		}
@@ -2092,7 +2262,11 @@ dom.contextMenu.addEventListener("click", async (event) => {
 			if (result?.compaction) state.compaction = result.compaction;
 			renderChrome();
 			renderContextMenu();
-			toast("自動圧縮を既定に戻しました");
+			if (result?.compaction?.projectOverridesReserve) {
+				toast("ユーザー設定を既定に戻しました（プロジェクト設定が優先）", "warning");
+			} else {
+				toast("自動圧縮を既定に戻しました");
+			}
 		} catch (error) {
 			toast(error.message, "error");
 		}
@@ -2101,9 +2275,7 @@ dom.contextMenu.addEventListener("click", async (event) => {
 	if (!event.target.closest('[data-action="compact"]')) return;
 	closeMenus();
 	try {
-		await api({ type: "compact" });
-		await refreshSnapshot();
-		toast("コンテキストを圧縮しました");
+		await compactContext();
 	} catch (error) {
 		toast(error.message, "error");
 	}
@@ -2179,6 +2351,7 @@ function openHistory() {
 	dom.drawerBackdrop.hidden = false;
 	dom.historyButton.setAttribute("aria-expanded", "true");
 	dom.sessionList.innerHTML = '<div class="session-empty">…</div>';
+	state.historyLimit = HISTORY_PAGE;
 	cancelHistorySelection();
 	loadSessions().catch((error) => {
 		dom.sessionList.innerHTML = `<div class="session-empty">${escapeHtml(error.message)}</div>`;
@@ -2200,7 +2373,8 @@ function renderSessionList() {
 		return;
 	}
 	const selecting = state.historySelection instanceof Set;
-	const items = state.sessions.map((session, index) => {
+	const visible = state.sessions.slice(0, state.historyLimit);
+	const items = visible.map((session, index) => {
 		const name = session.name || session.preview || "無題の会話";
 		const preview = session.name ? session.preview : "";
 		const selectable =
@@ -2211,7 +2385,7 @@ function renderSessionList() {
 		const selected = selecting && selectable && state.historySelection.has(session.id);
 		const check =
 			selecting && selectable
-				? `<span class="session-check${selected ? " checked" : ""}" role="checkbox" aria-checked="${selected}" aria-hidden="true"></span>`
+				? `<span class="session-check${selected ? " checked" : ""}" role="checkbox" aria-checked="${selected}" aria-hidden="true" data-index="${index}"></span>`
 				: "";
 		const trash =
 			!selecting && selectable
@@ -2219,27 +2393,32 @@ function renderSessionList() {
 						<svg class="icon"><use href="#i-trash"/></svg>
 					</button>`
 				: "";
+		const interaction = selecting
+			? selectable
+				? ` role="checkbox" aria-checked="${selected}" tabindex="0"`
+				: ' aria-disabled="true"'
+			: ' role="button" tabindex="0"';
 		return `<div class="session-item${session.current ? " current" : ""}${
 			selecting ? " selecting" : ""
-		}${selected ? " selected" : ""}" data-index="${index}" data-testid="session-item"${
-			selecting
-				? selectable
-					? ` role="checkbox" aria-checked="${selected}" tabindex="0"`
-					: ' aria-disabled="true"'
-				: ' role="button" tabindex="0"'
-		}>
+		}${selected ? " selected" : ""}" data-testid="session-item">
 			${check}
-			<span class="session-main">
+			<div class="session-main" data-index="${index}"${interaction}>
 				<span class="s-top"><span class="s-title">${escapeHtml(name)}</span>${
 					session.running
 						? '<span class="s-run" title="実行中" aria-label="実行中"></span>'
 						: ""
 				}<span class="s-time">${escapeHtml(relativeTime(session.modified))}</span></span>
 				${preview ? `<span class="s-preview">${escapeHtml(preview)}</span>` : ""}
-			</span>
+			</div>
 			${trash}
 		</div>`;
 	});
+	const remaining = state.sessions.length - visible.length;
+	if (remaining > 0) {
+		items.push(
+			`<button type="button" class="session-more" data-role="session-more" data-testid="session-more">さらに表示（残り ${remaining} 件）</button>`,
+		);
+	}
 	dom.sessionList.innerHTML = items.join("");
 	updateHistoryActions();
 }
@@ -2328,7 +2507,8 @@ function activateHistoryItem(index) {
 	const session = state.sessions[index];
 	if (!session || session.current) return;
 	if (session.runtime) activateSession(session.runtime);
-	else switchSession(session.path);
+	else if (session.path) switchSession(session.path);
+	else toast("この会話は再開できません", "warning");
 }
 
 dom.historyButton.addEventListener("click", openHistory);
@@ -2355,6 +2535,11 @@ dom.historySelectAll.addEventListener("click", () => {
 dom.historyDelete.addEventListener("click", deleteHistorySelection);
 dom.drawerBackdrop.addEventListener("click", closeHistory);
 dom.sessionList.addEventListener("click", (event) => {
+	if (event.target.closest('[data-role="session-more"]')) {
+		state.historyLimit += HISTORY_PAGE;
+		renderSessionList();
+		return;
+	}
 	const trash = event.target.closest("[data-delete-index]");
 	if (trash) {
 		deleteSessionAt(Number(trash.dataset.deleteIndex));
@@ -2397,27 +2582,22 @@ function scheduleMessages() {
 	});
 }
 
-function scheduleLive() {
-	if (liveFrame) return;
-	liveFrame = requestAnimationFrame(() => {
-		liveFrame = 0;
+function scheduleLive(immediate = false) {
+	if (immediate) {
+		if (liveTimer) {
+			clearTimeout(liveTimer);
+			liveTimer = 0;
+		}
 		renderLive();
 		renderRunStatus();
-	});
-}
-
-function collectToolResults(messages) {
-	const results = new Map();
-	const calls = new Set();
-	for (const message of messages) {
-		if (message.role === "toolResult") results.set(message.toolCallId, message);
-		if (message.role === "assistant" && Array.isArray(message.content)) {
-			for (const block of message.content) {
-				if (block.type === "toolCall") calls.add(block.id);
-			}
-		}
+		return;
 	}
-	return { results, calls };
+	if (liveTimer) return;
+	liveTimer = setTimeout(() => {
+		liveTimer = 0;
+		renderLive();
+		renderRunStatus();
+	}, LIVE_RENDER_MS);
 }
 
 function planIsComplete(plan) {
@@ -2486,6 +2666,7 @@ function messageRevision(message, ctx) {
 		return `u:${textOfContent(message.content).length}:${message.timestamp}:${message._optimistic ? "o" : ""}`;
 	}
 	if (message.role === "assistant") {
+		let pending = false;
 		const blocks = Array.isArray(message.content)
 			? message.content
 					.map((block) => {
@@ -2494,13 +2675,16 @@ function messageRevision(message, ctx) {
 						if (block.type === "toolCall") {
 							const result = ctx.results.get(block.id);
 							const resultLength = result ? textOfContent(result.content).length : 0;
+							if (!result) pending = true;
 							return `c${block.id}:${state.toolRev[block.id] ?? 0}:${resultLength}`;
 						}
 						return block.type;
 					})
 					.join("|")
 			: "0";
-		return `a:${blocks}:${message.stopReason}:${message.errorMessage ?? ""}:${state.running ? "r" : "d"}`;
+		return `a:${blocks}:${message.stopReason}:${message.errorMessage ?? ""}:${
+			pending ? (state.running ? "r" : "d") : ""
+		}`;
 	}
 	if (message.role === "toolResult") {
 		return `r:${message.toolCallId}:${textOfContent(message.content).length}:${message.isError}`;
@@ -2513,7 +2697,7 @@ function renderMessages(reset = false) {
 		dom.messageList.replaceChildren();
 		messageNodes.clear();
 	}
-	const ctx = collectToolResults(state.messages);
+	const ctx = messageContext();
 	state.messages.forEach((message, index) => {
 		const revision = messageRevision(message, ctx);
 		const existing = messageNodes.get(index);
@@ -2971,7 +3155,7 @@ function renderLive() {
 		dom.empty.hidden = state.messages.length > 0 || state.running;
 		return;
 	}
-	const ctx = collectToolResults(state.messages);
+	const ctx = messageContext();
 	const node = document.createElement("div");
 	node.className = "assistant live";
 	node.dataset.testid = "message-live";
@@ -3131,7 +3315,11 @@ function renderChrome() {
 
 	renderWidgets();
 	renderBanner();
-	document.title = state.sessionName ? `${state.sessionName} · Pi-dock` : "Pi-dock";
+	document.title = state.extensionTitle
+		? state.extensionTitle
+		: state.sessionName
+			? `${state.sessionName} · Pi-dock`
+			: "Pi-dock";
 }
 
 function renderWidgets() {
