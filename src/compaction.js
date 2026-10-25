@@ -1,17 +1,17 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { DockError } from "./errors.js";
+import { TinyChatError } from "./errors.js";
 import { agentDir } from "./sessions.js";
 
 /**
- * Pi owns compaction configuration. Dock only reads and writes Pi's global
+ * Pi owns compaction configuration. Pi TinyChat only reads and writes Pi's global
  * settings so the UI can show the threshold as a percentage of the current
  * model's context window. Project settings and per-model overrides are left
  * entirely to Pi.
  *
  * Writes happen only on explicit user action, with an atomic rename. Do not
- * edit the same settings file from Pi and Dock at the same moment.
+ * edit the same settings file from Pi and Pi TinyChat at the same moment.
  */
 const DEFAULT_RESERVE = 16_384;
 const ASSUMED_CONTEXT_WINDOW = 1_000_000;
@@ -26,14 +26,14 @@ async function readSettings(path, { strict = false } = {}) {
 		if (!text.trim()) return {};
 		const value = JSON.parse(text);
 		if (!value || typeof value !== "object" || Array.isArray(value)) {
-			if (strict) throw new DockError("server.invalidSettings");
+			if (strict) throw new TinyChatError("server.invalidSettings");
 			return {};
 		}
 		return value;
 	} catch (error) {
-		if (error instanceof DockError) throw error;
+		if (error instanceof TinyChatError) throw error;
 		if (error.code === "ENOENT") return {};
-		if (strict) throw new DockError("server.readSettings", { message: error.message });
+		if (strict) throw new TinyChatError("server.readSettings", { message: error.message });
 		return {};
 	}
 }
@@ -73,9 +73,9 @@ function pruneEmpty(settings) {
 
 export async function setCompactionThreshold({ env = process.env, model, percent }) {
 	const contextWindow = safeInteger(model?.contextWindow) ?? 0;
-	if (!contextWindow) throw new DockError("server.contextUnknown");
+	if (!contextWindow) throw new TinyChatError("server.contextUnknown");
 	if (typeof percent !== "number" || !Number.isFinite(percent) || percent <= 0 || percent >= 100) {
-		throw new DockError("server.percentRange");
+		throw new TinyChatError("server.percentRange");
 	}
 
 	const path = settingsPath(env);

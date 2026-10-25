@@ -2,27 +2,27 @@ import { expect, test } from "@playwright/test";
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { join } from "node:path";
-import { sessionFile, setupWorkspace, startDock, stopDock } from "./harness.js";
+import { sessionFile, setupWorkspace, startTinyChat, stopTinyChat } from "./harness.js";
 
 const PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 let workspace;
-let dock;
+let app;
 let page;
 
 test.beforeEach(async ({ page: currentPage, context }) => {
 	workspace = await setupWorkspace();
-	dock = await startDock(workspace);
+	app = await startTinyChat(workspace);
 	page = currentPage;
 	page.on("pageerror", (error) => console.log("PAGEERROR:", error.message));
 	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-	await page.goto(dock.url);
+	await page.goto(app.url);
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
 });
 
 test.afterEach(async () => {
-	await stopDock(dock, workspace);
+	await stopTinyChat(app, workspace);
 });
 
 const input = () => page.locator("#input");
@@ -50,12 +50,12 @@ function elapsedSeconds(text) {
 }
 
 async function rpc(command) {
-	const response = await page.request.post(`http://127.0.0.1:${dock.port}/api/rpc`, {
+	const response = await page.request.post(`http://127.0.0.1:${app.port}/api/rpc`, {
 		data: command,
 		headers: {
 			"content-type": "application/json",
-			origin: `http://127.0.0.1:${dock.port}`,
-			"x-pi-tinychat-token": dock.token,
+			origin: `http://127.0.0.1:${app.port}`,
+			"x-pi-tinychat-token": app.token,
 		},
 	});
 	return response.json();
@@ -76,8 +76,8 @@ test("loads the shell and enforces the token", async () => {
 
 	const bareStatus = await new Promise((resolve, reject) => {
 		const request = httpRequest(
-			`http://127.0.0.1:${dock.port}/`,
-			{ headers: { host: `127.0.0.1:${dock.port}` } },
+			`http://127.0.0.1:${app.port}/`,
+			{ headers: { host: `127.0.0.1:${app.port}` } },
 			(response) => {
 				response.resume();
 				resolve(response.statusCode);
@@ -89,7 +89,7 @@ test("loads the shell and enforces the token", async () => {
 	expect(bareStatus).toBe(401);
 	await page.context().clearCookies();
 	const brokenToken = await page.request.get(
-		`http://127.0.0.1:${dock.port}/api/events?token=wrong`,
+		`http://127.0.0.1:${app.port}/api/events?token=wrong`,
 	);
 	expect(brokenToken.status()).toBe(401);
 
@@ -335,9 +335,6 @@ test("refreshes the context ring while a response is streaming", async () => {
 	await send("long please");
 	await expect(page.getByTestId("message-live")).toContainText("chunk 2");
 	await expect(button).toHaveClass(/running/);
-	await button.click();
-	await expect(page.getByTestId("compact-button")).toHaveCount(0);
-	await button.click();
 	await expect.poll(ringOffset, { timeout: 10_000 }).not.toBe(before);
 	await expectDone();
 	await expect(button).not.toHaveClass(/running/);
@@ -913,6 +910,7 @@ test("restores only the active branch plan after resuming", async () => {
 		timestamp: stamp,
 		message: { timestamp, ...value },
 	});
+	// Sessions written by the pre-rename Pi Dock build must still load.
 	const plan = (title, text, status) => ({
 		role: "toolResult",
 		toolCallId: `call_${title}`,
@@ -1082,14 +1080,14 @@ test("rejects unknown paths and never deletes another project", async () => {
 	);
 
 	const traversal = await rpc({
-		type: "dock:delete_sessions",
+		type: "tinychat:delete_sessions",
 		ids: ["../../package.json"],
 	});
 	expect(traversal.ok).toBe(true);
 	expect(traversal.data.deleted).toBe(0);
 	expect(traversal.data.failed[0].errorKey).toBe("server.sessionNotFound");
 
-	const removed = await rpc({ type: "dock:delete_sessions", all: true });
+	const removed = await rpc({ type: "tinychat:delete_sessions", all: true });
 	expect(removed.ok).toBe(true);
 	expect(removed.data.deleted).toBe(2);
 	await expect(access(otherFile)).resolves.toBeUndefined();
@@ -1106,7 +1104,7 @@ test("protects the active session from deletion", async () => {
 		}),
 	);
 	const result = await rpc({
-		type: "dock:delete_sessions",
+		type: "tinychat:delete_sessions",
 		ids: ["fake-session"],
 	});
 	expect(result.ok).toBe(true);
@@ -1134,13 +1132,13 @@ test("answers extension dialogs through RPC", async () => {
 test("drops pending extension dialogs when Pi restarts", async () => {
 	await send("please ask");
 	await expect(page.locator("#dialog")).toBeVisible();
-	const before = await rpc({ type: "dock:snapshot" });
+	const before = await rpc({ type: "tinychat:snapshot" });
 	expect(before.ok).toBe(true);
 	expect(before.data.pendingUi).toHaveLength(1);
 
-	const restarted = await rpc({ type: "dock:restart" });
+	const restarted = await rpc({ type: "tinychat:restart" });
 	expect(restarted.ok).toBe(true);
-	const after = await rpc({ type: "dock:snapshot" });
+	const after = await rpc({ type: "tinychat:snapshot" });
 	expect(after.ok).toBe(true);
 	expect(after.data.pendingUi).toHaveLength(0);
 });
@@ -1320,6 +1318,13 @@ test("runs Pi TinyChat built-in slash commands", async () => {
 	await input().press("Control+Enter");
 	await expect(page.getByTestId("toast").filter({ hasText: "圧縮しました" })).toBeVisible();
 	await expect(page.getByTestId("message-user")).toHaveCount(0);
+	// Directly after compaction Pi may have no valid context estimate yet.
+	// Show an empty ring without inventing a value or adding a "unknown" label.
+	await expect(page.locator("#contextButton")).toHaveClass(/unknown/);
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /Context/);
+	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /unknown/);
+	await expect(page.locator("#ringFg")).toBeVisible();
+	await expect.poll(ringOffset).toBeCloseTo(47.12, 1);
 
 	await input().fill("/name 調査メモ");
 	await input().press("Control+Enter");
@@ -1347,25 +1352,16 @@ test("stopping restores queued steering text", async () => {
 	await expect(page.locator("#queueBadge")).toBeHidden();
 });
 
-test("compacts the context from the menu", async () => {
-	await page.locator("#contextButton").click();
-	await expect(page.getByTestId("compact-button")).toBeVisible();
-	await page.getByTestId("compact-button").click();
-	await expect(page.getByTestId("toast").filter({ hasText: "圧縮しました" })).toBeVisible();
-	await expect(page.locator("#contextMenu")).toBeHidden();
-	// Directly after compaction Pi may have no valid context estimate yet.
-	// Show an empty ring without inventing a value or adding a "unknown" label.
-	await expect(page.locator("#contextButton")).toHaveClass(/unknown/);
-	await expect(page.locator("#contextButton")).toHaveAttribute("title", /Context/);
-	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /unknown/);
-	await expect(page.locator("#ringFg")).toBeVisible();
-	await expect.poll(ringOffset).toBeCloseTo(47.12, 1);
-
-	await send("hello");
-	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
-		timeout: 10_000,
-	});
-	await expect(page.locator("#contextButton")).not.toHaveClass(/unknown/);
+test("starts on the next free port when the requested port is busy", async () => {
+	const second = await startTinyChat(workspace, {}, { port: app.port });
+	try {
+		expect(second.port).toBeGreaterThan(app.port);
+		expect(second.port).toBeLessThanOrEqual(app.port + 20);
+		const response = await page.request.get(second.url, { maxRedirects: 0 });
+		expect(response.status()).toBe(303);
+	} finally {
+		await stopTinyChat(second);
+	}
 });
 
 test("restarts Pi after it exits", async () => {
@@ -1380,19 +1376,19 @@ test("restarts Pi after it exits", async () => {
 });
 
 test("blocks cross-origin and bad-host requests", async () => {
-	const base = `http://127.0.0.1:${dock.port}`;
+	const base = `http://127.0.0.1:${app.port}`;
 	await page.context().clearCookies();
 	const noOrigin = await page.request.post(`${base}/api/rpc`, {
-		data: { type: "dock:snapshot" },
+		data: { type: "tinychat:snapshot" },
 		headers: { "content-type": "application/json" },
 	});
 	expect(noOrigin.status()).toBe(401);
 
 	const wrongOrigin = await page.request.post(`${base}/api/rpc`, {
-		data: { type: "dock:snapshot" },
+		data: { type: "tinychat:snapshot" },
 		headers: {
 			"content-type": "application/json",
-			"x-pi-tinychat-token": dock.token,
+			"x-pi-tinychat-token": app.token,
 			origin: "http://evil.example",
 		},
 	});
@@ -1401,7 +1397,7 @@ test("blocks cross-origin and bad-host requests", async () => {
 	const hostStatus = await new Promise((resolve, reject) => {
 		const request = httpRequest(
 			`${base}/`,
-			{ headers: { host: `evil.example:${dock.port}` } },
+			{ headers: { host: `evil.example:${app.port}` } },
 			(response) => {
 				response.resume();
 				resolve(response.statusCode);
@@ -1412,10 +1408,10 @@ test("blocks cross-origin and bad-host requests", async () => {
 	});
 	expect(hostStatus).toBe(421);
 
-	const traversal = await page.request.get(`${base}/..%2fpackage.json?token=${dock.token}`);
+	const traversal = await page.request.get(`${base}/..%2fpackage.json?token=${app.token}`);
 	expect(traversal.status()).toBe(404);
 
-	const pageResponse = await page.request.get(dock.url);
+	const pageResponse = await page.request.get(app.url);
 	expect(pageResponse.headers()["content-security-policy"]).toContain("default-src 'self'");
 	expect(pageResponse.headers()["x-content-type-options"]).toBe("nosniff");
 });

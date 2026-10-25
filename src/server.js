@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DockError } from "./errors.js";
+import { TinyChatError } from "./errors.js";
 import { PiBridge } from "./pi.js";
 import { LiveState } from "./live.js";
 import { PLAN_STATE_ENTRY, PLAN_TOOL, normalizePlan, planFromEntries } from "./plan.js";
@@ -24,10 +24,11 @@ const PLAN_EXTENSION = join(
 	dirname(fileURLToPath(import.meta.url)),
 	"..",
 	"extension",
-	"dock-plan.ts",
+	"plan.ts",
 );
 const MAX_BODY = 12 * 1024 * 1024;
 const HEARTBEAT_MS = 25_000;
+const PORT_FALLBACK_ATTEMPTS = 20;
 
 const RPC_TIMEOUTS = {
 	abort: 90_000,
@@ -96,7 +97,7 @@ async function waitForPi(bridge, timeout = 30_000) {
 		}
 	}
 	if (bridge.lastExit) throw new Error(bridge.lastExit.reason);
-	throw new DockError("server.piTimeout");
+	throw new TinyChatError("server.piTimeout");
 }
 
 function publicModel(model) {
@@ -112,7 +113,7 @@ function publicModel(model) {
 
 function validateImages(images) {
 	if (images === undefined) return undefined;
-	if (!Array.isArray(images) || images.length > 6) throw new DockError("server.invalidImages");
+	if (!Array.isArray(images) || images.length > 6) throw new TinyChatError("server.invalidImages");
 	return images.map((image) => {
 		if (
 			!image ||
@@ -121,13 +122,13 @@ function validateImages(images) {
 			typeof image.mimeType !== "string" ||
 			image.data.length > MAX_BODY
 		) {
-			throw new DockError("server.invalidImages");
+			throw new TinyChatError("server.invalidImages");
 		}
 		return { type: "image", data: image.data, mimeType: image.mimeType };
 	});
 }
 
-export async function createDock({
+export async function createTinyChat({
 	cwd,
 	launcher,
 	env = process.env,
@@ -135,12 +136,8 @@ export async function createDock({
 	port = 0,
 	host = "127.0.0.1",
 	piArgs = [],
+	portAttempts = PORT_FALLBACK_ATTEMPTS,
 }) {
-	const assets = new Map();
-	for (const [path, [file, type]] of Object.entries(ASSETS)) {
-		assets.set(path, { body: await readFile(join(PUBLIC_DIR, file)), type });
-	}
-
 	const clients = new Set();
 	const runtimes = new Map();
 	const startingSessions = new Map();
@@ -264,7 +261,7 @@ export async function createDock({
 					"auto_retry_end",
 				].includes(record.type)
 			) {
-				broadcast({ type: "dock:runtime", runtime: runtimeSummary(runtime) });
+				broadcast({ type: "tinychat:runtime", runtime: runtimeSummary(runtime) });
 			}
 			return;
 		}
@@ -276,7 +273,7 @@ export async function createDock({
 		});
 		if (record.type === "tool_execution_end" && record.toolName === PLAN_TOOL) {
 			broadcast({
-				type: "dock:plan",
+				type: "tinychat:plan",
 				runtime: runtime.id,
 				plan: normalizePlan(record.result?.details),
 			});
@@ -287,7 +284,7 @@ export async function createDock({
 			record.message.toolName === PLAN_TOOL
 		) {
 			broadcast({
-				type: "dock:plan",
+				type: "tinychat:plan",
 				runtime: runtime.id,
 				plan: normalizePlan(record.message.details),
 			});
@@ -298,7 +295,7 @@ export async function createDock({
 			record.entry.customType === PLAN_STATE_ENTRY
 		) {
 			broadcast({
-				type: "dock:plan",
+				type: "tinychat:plan",
 				runtime: runtime.id,
 				plan: normalizePlan(record.entry.data),
 			});
@@ -315,11 +312,11 @@ export async function createDock({
 		runtime.widgets = {};
 		runtime.extensionTitle = "";
 		if (runtime === activeRuntime) {
-			broadcast({ type: "dock:exit", runtime: runtime.id, reason: info.reason });
+			broadcast({ type: "tinychat:exit", runtime: runtime.id, reason: info.reason });
 			return;
 		}
 		runtimes.delete(runtime.id);
-		broadcast({ type: "dock:runtime", runtime: runtimeSummary(runtime) });
+		broadcast({ type: "tinychat:runtime", runtime: runtimeSummary(runtime) });
 	}
 
 	async function startRuntime(options = {}) {
@@ -370,12 +367,12 @@ export async function createDock({
 	}
 
 	function requireRuntime() {
-		if (!activeRuntime) throw new DockError("server.notConnected");
+		if (!activeRuntime) throw new TinyChatError("server.notConnected");
 		if (activeRuntime.exit) throw new Error(activeRuntime.exit.reason);
 		return activeRuntime;
 	}
 
-	async function dockSessions() {
+	async function allSessions() {
 		await Promise.all(
 			[...runtimes.values()]
 				.filter((runtime) => runtime.bridge.running)
@@ -475,26 +472,26 @@ export async function createDock({
 
 	async function currentModel() {
 		const state = await requireRuntime().bridge.request({ type: "get_state" });
-		if (!state?.model) throw new DockError("server.noModel");
+		if (!state?.model) throw new TinyChatError("server.noModel");
 		return state.model;
 	}
 
 	async function handleRpc(command) {
 		if (!command || typeof command !== "object" || typeof command.type !== "string") {
-			throw new DockError("server.invalidCommand");
+			throw new TinyChatError("server.invalidCommand");
 		}
 
-		if (command.type === "dock:snapshot") return snapshot();
-		if (command.type === "dock:sessions") return await dockSessions();
-		if (command.type === "dock:activate") {
+		if (command.type === "tinychat:snapshot") return snapshot();
+		if (command.type === "tinychat:sessions") return await allSessions();
+		if (command.type === "tinychat:activate") {
 			const runtime = runtimes.get(String(command.runtimeId));
-			if (!runtime || runtime.exit) throw new DockError("server.sessionNotFound");
+			if (!runtime || runtime.exit) throw new TinyChatError("server.sessionNotFound");
 			activateRuntime(runtime);
 			return { runtime: runtime.id };
 		}
-		if (command.type === "dock:restart") {
+		if (command.type === "tinychat:restart") {
 			const runtime = activeRuntime;
-			if (!runtime) throw new DockError("server.notConnected");
+			if (!runtime) throw new TinyChatError("server.notConnected");
 			runtime.pendingUi.clear();
 			runtime.statuses = {};
 			runtime.widgets = {};
@@ -506,13 +503,13 @@ export async function createDock({
 			await refreshRuntimeState(runtime);
 			return { restarted: true };
 		}
-		if (command.type === "dock:delete_sessions") {
+		if (command.type === "tinychat:delete_sessions") {
 			const all = command.all === true;
 			const ids = Array.isArray(command.ids)
 				? command.ids.filter((id) => typeof id === "string" && id)
 				: null;
 			if (!all && (!ids || ids.length === 0)) {
-				throw new DockError("server.deleteTargetMissing");
+				throw new TinyChatError("server.deleteTargetMissing");
 			}
 			const { targets, missing } = await resolveSessionTargets({
 				cwd,
@@ -562,7 +559,7 @@ export async function createDock({
 						continue;
 					}
 					// A background session may have been opened earlier in this
-					// Dock run. Stop it before removing the file it writes to.
+					// Pi TinyChat run. Stop it before removing the file it writes to.
 					await runtime.bridge.stop().catch(() => {});
 					runtimes.delete(runtime.id);
 				}
@@ -581,12 +578,12 @@ export async function createDock({
 			return { cancelled: false, runtime: runtime.id };
 		}
 		if (command.type === "switch_session") {
-			if (typeof command.sessionPath !== "string") throw new DockError("server.invalidPath");
+			if (typeof command.sessionPath !== "string") throw new TinyChatError("server.invalidPath");
 			const runtime = await runtimeForPath(command.sessionPath);
 			activateRuntime(runtime);
 			return { cancelled: false, runtime: runtime.id };
 		}
-		if (command.type === "dock:set_compaction") {
+		if (command.type === "tinychat:set_compaction") {
 			const model = await currentModel();
 			if (command.action === "enable") {
 				await setCompactionEnabled({ env, enabled: command.enabled !== false });
@@ -601,12 +598,12 @@ export async function createDock({
 			}
 			return { compaction: await describeCompaction({ env, model }) };
 		}
-		if (command.type === "dock:extension_ui_response") {
-			if (typeof command.id !== "string") throw new DockError("server.invalidId");
+		if (command.type === "tinychat:extension_ui_response") {
+			if (typeof command.id !== "string") throw new TinyChatError("server.invalidId");
 			const runtime = command.runtimeId
 				? runtimes.get(String(command.runtimeId))
 				: requireRuntime();
-			if (!runtime || runtime.exit) throw new DockError("server.sessionNotFound");
+			if (!runtime || runtime.exit) throw new TinyChatError("server.sessionNotFound");
 			const response = {
 				type: "extension_ui_response",
 				id: command.id,
@@ -620,12 +617,12 @@ export async function createDock({
 			runtime.bridge.sendRaw(response);
 			return { sent: true };
 		}
-		if (!FORWARDED.has(command.type)) throw new DockError("server.unsupportedCommand");
+		if (!FORWARDED.has(command.type)) throw new TinyChatError("server.unsupportedCommand");
 
 		const payload = { type: command.type };
 		if (command.type === "prompt" || command.type === "steer" || command.type === "follow_up") {
 			if (typeof command.message !== "string" || !command.message.trim()) {
-				throw new DockError("server.invalidMessage");
+				throw new TinyChatError("server.invalidMessage");
 			}
 			payload.message = command.message;
 			const images = validateImages(command.images);
@@ -634,17 +631,17 @@ export async function createDock({
 		}
 		if (command.type === "set_model") {
 			if (typeof command.provider !== "string" || typeof command.modelId !== "string") {
-				throw new DockError("server.invalidModel");
+				throw new TinyChatError("server.invalidModel");
 			}
 			payload.provider = command.provider;
 			payload.modelId = command.modelId;
 		}
 		if (command.type === "set_thinking_level") {
-			if (typeof command.level !== "string") throw new DockError("server.invalidLevel");
+			if (typeof command.level !== "string") throw new TinyChatError("server.invalidLevel");
 			payload.level = command.level;
 		}
 		if (command.type === "set_session_name") {
-			if (typeof command.name !== "string") throw new DockError("server.invalidName");
+			if (typeof command.name !== "string") throw new TinyChatError("server.invalidName");
 			payload.name = command.name;
 		}
 		if (command.type === "compact" && typeof command.customInstructions === "string") {
@@ -706,7 +703,7 @@ export async function createDock({
 			request.on("data", (chunk) => {
 				size += chunk.length;
 				if (size > MAX_BODY) {
-					reject(new DockError("server.requestTooLarge"));
+					reject(new TinyChatError("server.requestTooLarge"));
 					request.destroy();
 					return;
 				}
@@ -761,7 +758,7 @@ export async function createDock({
 				"x-accel-buffering": "no",
 			});
 			response.write("retry: 3000\n\n");
-			response.write(`data: ${JSON.stringify({ type: "dock:hello", cwd })}\n\n`);
+			response.write(`data: ${JSON.stringify({ type: "tinychat:hello", cwd })}\n\n`);
 			clients.add(response);
 			request.on("close", () => clients.delete(response));
 			response.on("error", () => clients.delete(response));
@@ -791,7 +788,7 @@ export async function createDock({
 				json(response, 200, {
 					ok: false,
 					error: error.message,
-					...(error instanceof DockError
+					...(error instanceof TinyChatError
 						? { errorKey: error.key, errorParams: error.params }
 						: {}),
 				});
@@ -805,28 +802,32 @@ export async function createDock({
 			return;
 		}
 
-		const asset = assets.get(url.pathname);
+		const asset = ASSETS[url.pathname];
 		if (!asset) {
 			response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
 			response.end("Not found");
 			return;
 		}
+		const [file, type] = asset;
 		// The HTML shell needs the session token; the assets it references do not
 		// contain any secret and are served without one so the page can boot.
-		const needsToken = asset.type.startsWith("text/html");
+		const needsToken = type.startsWith("text/html");
 		if (needsToken && !authorized(request, url)) {
 			response.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
 			response.end("Unauthorized — open the URL printed by pi-tinychat");
 			return;
 		}
 		response.writeHead(200, {
-			"content-type": asset.type,
+			"content-type": type,
 			"cache-control": "no-store",
 			"content-security-policy": CONTENT_SECURITY_POLICY,
 			"referrer-policy": "no-referrer",
 			"x-content-type-options": "nosniff",
 		});
-		response.end(request.method === "HEAD" ? undefined : asset.body);
+		// Read on every request so UI edits show up on reload without a restart.
+		response.end(
+			request.method === "HEAD" ? undefined : await readFile(join(PUBLIC_DIR, file)),
+		);
 	});
 
 	const heartbeat = setInterval(() => {
@@ -840,13 +841,37 @@ export async function createDock({
 	}, HEARTBEAT_MS);
 	heartbeat.unref();
 
-	await new Promise((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(port, host, () => {
-			server.removeListener("error", reject);
-			resolve();
-		});
-	});
+	const lastPort = port === 0 ? 0 : Math.min(65535, port + portAttempts - 1);
+	let bound = false;
+	let listenError = null;
+	for (let candidate = port; candidate <= lastPort; candidate += 1) {
+		try {
+			await new Promise((resolve, reject) => {
+				const onError = (error) => reject(error);
+				server.once("error", onError);
+				server.listen(candidate, host, () => {
+					server.removeListener("error", onError);
+					resolve();
+				});
+			});
+			bound = true;
+			break;
+		} catch (error) {
+			listenError = error;
+			if (error.code !== "EADDRINUSE") {
+				clearInterval(heartbeat);
+				throw error;
+			}
+		}
+	}
+	if (!bound) {
+		clearInterval(heartbeat);
+		throw new Error(
+			port === 0
+				? `サーバーを起動できませんでした: ${listenError?.message ?? "unknown error"}`
+				: `ポート ${port}〜${lastPort} はすべて使用中です。--port で別のポートを指定してください。`,
+		);
+	}
 	const address = server.address();
 	actualPort = typeof address === "object" && address ? address.port : port;
 

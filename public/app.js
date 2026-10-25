@@ -3,7 +3,14 @@ import { escapeHtml, renderMarkdown } from "./markdown.js";
 
 const TOKEN = new URLSearchParams(location.search).get("token") ?? "";
 const STORAGE_KEY = "pi-tinychat:settings";
+// Settings written before the Pi Dock → Pi TinyChat rename are still read once.
 const LEGACY_STORAGE_KEY = "pi-dock:settings";
+const PLAN_TOOL = "tiny_plan";
+const LEGACY_PLAN_TOOL = "dock_plan";
+
+function isPlanTool(name) {
+	return name === PLAN_TOOL || name === LEGACY_PLAN_TOOL;
+}
 const DEFAULT_SETTINGS = {
 	ctrlEnterSend: true,
 	theme: "system",
@@ -274,7 +281,7 @@ function connect() {
 }
 
 async function refreshSnapshot() {
-	const snapshot = await api({ type: "dock:snapshot" });
+	const snapshot = await api({ type: "tinychat:snapshot" });
 	statsGeneration += 1;
 	state.runtimeId = snapshot.runtime ?? "";
 	state.cwd = snapshot.cwd ?? "";
@@ -346,15 +353,15 @@ async function refreshSnapshot() {
 function handleRecord(record) {
 	if (
 		record.runtime &&
-		record.type !== "dock:runtime" &&
+		record.type !== "tinychat:runtime" &&
 		record.runtime !== state.runtimeId
 	) {
 		return;
 	}
 	switch (record.type) {
-		case "dock:hello":
+		case "tinychat:hello":
 			return;
-		case "dock:runtime": {
+		case "tinychat:runtime": {
 			const info = record.runtime;
 			state.sessions = state.sessions.flatMap((session) => {
 				if (session.runtime !== info.id) return [session];
@@ -374,7 +381,7 @@ function handleRecord(record) {
 			}
 			return;
 		}
-		case "dock:exit":
+		case "tinychat:exit":
 			state.piDown = record.reason ?? t("server.notConnected");
 			state.running = false;
 			state.runStartedAt = null;
@@ -394,7 +401,7 @@ function handleRecord(record) {
 			renderLive();
 			renderRunStatus();
 			return;
-		case "dock:plan":
+		case "tinychat:plan":
 			if (!settings.plan) return;
 			state.plan = record.plan ?? null;
 			renderPlan();
@@ -833,7 +840,7 @@ function respondDialog(request, response) {
 	state.dialogs = state.dialogs.filter((item) => item !== request);
 	renderDialog();
 	api({
-		type: "dock:extension_ui_response",
+		type: "tinychat:extension_ui_response",
 		id: request.id,
 		runtimeId: request.runtime,
 		...response,
@@ -1024,15 +1031,15 @@ async function send() {
 		return;
 	}
 	const slash = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text);
-	const dockCommand = slash ? DOCK_COMMANDS.find((command) => command.name === slash[1]) : null;
-	if (dockCommand) {
+	const builtinCommand = slash ? BUILTIN_COMMANDS.find((command) => command.name === slash[1]) : null;
+	if (builtinCommand) {
 		dom.input.value = "";
 		autosize();
 		updateSendButton();
 		closeSlash();
 		closeMenus();
 		closeCommandMenu();
-		await runDockCommand(dockCommand, slash[2] ?? "");
+		await runBuiltinCommand(builtinCommand, slash[2] ?? "");
 		return;
 	}
 	closeSlash();
@@ -1155,7 +1162,7 @@ async function switchSession(path) {
 
 async function activateSession(runtimeId) {
 	try {
-		await api({ type: "dock:activate", runtimeId });
+		await api({ type: "tinychat:activate", runtimeId });
 		clearAttachments();
 		closeHistory();
 		await refreshSnapshot();
@@ -1601,23 +1608,23 @@ function initPlanResizer() {
 
 /* -------------------------------------------------------------- slash menu */
 
-const DOCK_COMMANDS = [
+const BUILTIN_COMMANDS = [
 	{
 		name: "new",
 		description: "Start a new chat",
-		source: "dock",
+		source: "builtin",
 		run: newChat,
 	},
 	{
 		name: "resume",
 		description: "Resume a chat from history",
-		source: "dock",
+		source: "builtin",
 		run: openHistory,
 	},
 	{
 		name: "compact",
 		description: "Compact the context",
-		source: "dock",
+		source: "builtin",
 		run: async () => {
 			await compactContext();
 		},
@@ -1625,31 +1632,31 @@ const DOCK_COMMANDS = [
 	{
 		name: "model",
 		description: "Choose a model",
-		source: "dock",
+		source: "builtin",
 		run: () => openMenu("model"),
 	},
 	{
 		name: "thinking",
 		description: "Change reasoning effort",
-		source: "dock",
+		source: "builtin",
 		run: () => openMenu("thinking"),
 	},
 	{
 		name: "settings",
 		description: "Open settings",
-		source: "dock",
+		source: "builtin",
 		run: () => openMenu("settings"),
 	},
 	{
 		name: "session",
 		description: "Show session usage",
-		source: "dock",
+		source: "builtin",
 		run: () => openMenu("context"),
 	},
 	{
 		name: "copy",
 		description: "Copy the last response",
-		source: "dock",
+		source: "builtin",
 		run: async () => {
 			const text = lastAssistantText();
 			if (!text) throw new Error(t("cmd.noResponse"));
@@ -1660,7 +1667,7 @@ const DOCK_COMMANDS = [
 	{
 		name: "export",
 		description: "Export the session as HTML",
-		source: "dock",
+		source: "builtin",
 		run: async () => {
 			const result = await api({ type: "export_html" });
 			toast(result?.path ? t("cmd.exportedPath", { path: result.path }) : t("cmd.exported"));
@@ -1669,7 +1676,7 @@ const DOCK_COMMANDS = [
 	{
 		name: "name",
 		description: "Set the session name",
-		source: "dock",
+		source: "builtin",
 		argument: true,
 		run: async (args) => {
 			if (!args) throw new Error(t("cmd.nameRequired"));
@@ -1681,7 +1688,7 @@ const DOCK_COMMANDS = [
 	{
 		name: "reload",
 		description: "Restart Pi and reload settings",
-		source: "dock",
+		source: "builtin",
 		run: async () => {
 			if (state.running) throw new Error(t("cmd.reloadRunning"));
 			await restartPi();
@@ -1691,7 +1698,7 @@ const DOCK_COMMANDS = [
 
 function allCommands() {
 	const names = new Set(state.commands.map((command) => command.name));
-	return [...state.commands, ...DOCK_COMMANDS.filter((command) => !names.has(command.name))];
+	return [...state.commands, ...BUILTIN_COMMANDS.filter((command) => !names.has(command.name))];
 }
 
 function lastAssistantText() {
@@ -1704,7 +1711,7 @@ function lastAssistantText() {
 	return "";
 }
 
-async function runDockCommand(command, args = "") {
+async function runBuiltinCommand(command, args = "") {
 	try {
 		await command.run(args.trim());
 	} catch (error) {
@@ -1712,15 +1719,15 @@ async function runDockCommand(command, args = "") {
 	}
 }
 
-function chooseDockCommand(command) {
-	if (!command || command.source !== "dock") return false;
+function chooseBuiltinCommand(command) {
+	if (!command || command.source !== "builtin") return false;
 	if (command.argument) return false;
 	if (dom.input.value.startsWith(`/${command.name}`)) {
 		dom.input.value = "";
 		autosize();
 		updateSendButton();
 	}
-	runDockCommand(command);
+	runBuiltinCommand(command);
 	return true;
 }
 
@@ -1782,12 +1789,12 @@ function insertCommand(command) {
 function chooseSlash(command) {
 	if (!command) return;
 	closeSlash();
-	if (chooseDockCommand(command)) return;
+	if (chooseBuiltinCommand(command)) return;
 	insertCommand(command);
 }
 
 function commandSourceLabel(source) {
-	if (source === "dock") return "Built-in";
+	if (source === "builtin") return "Built-in";
 	if (source === "skill") return "Skill";
 	if (source === "extension") return "Extension";
 	if (source === "prompt" || source === "template") return "Prompt";
@@ -1795,7 +1802,7 @@ function commandSourceLabel(source) {
 }
 
 function commandSourceIcon(source) {
-	if (source === "dock") return "i-tinychat";
+	if (source === "builtin") return "i-tinychat";
 	if (source === "skill") return "i-spark";
 	if (source === "extension") return "i-extension";
 	return "i-prompt";
@@ -1881,7 +1888,7 @@ function closeCommandMenu() {
 function chooseCommand(command) {
 	if (!command) return;
 	closeCommandMenu();
-	if (chooseDockCommand(command)) return;
+	if (chooseBuiltinCommand(command)) return;
 	insertCommand(command);
 }
 
@@ -2204,15 +2211,7 @@ function renderContextMenu() {
 			</div>
 		</div>
 		${unknown}
-		${compactionMeterMarkup(usedTokens, thresholdTokens)}` +
-		(state.running || state.compacting || state.compactingRequest
-			? ""
-			: `<div class="setting-row compaction-row">
-				<span>Manual compaction</span>
-				<div class="compaction-actions">
-					<button type="button" data-action="compact" data-testid="compact-button" title="Compact the context">Run</button>
-				</div>
-			</div>`);
+		${compactionMeterMarkup(usedTokens, thresholdTokens)}`;
 }
 
 function formatTokenCount(value) {
@@ -2306,7 +2305,7 @@ dom.contextMenu.addEventListener("click", async (event) => {
 	if (percentButton) {
 		try {
 			const result = await api({
-				type: "dock:set_compaction",
+				type: "tinychat:set_compaction",
 				percent: Number(percentButton.dataset.compactionPercent),
 			});
 			if (result?.compaction) state.compaction = result.compaction;
@@ -2320,7 +2319,7 @@ dom.contextMenu.addEventListener("click", async (event) => {
 	}
 	if (event.target.closest("[data-compaction-clear]")) {
 		try {
-			const result = await api({ type: "dock:set_compaction", action: "clear" });
+			const result = await api({ type: "tinychat:set_compaction", action: "clear" });
 			if (result?.compaction) state.compaction = result.compaction;
 			renderChrome();
 			renderContextMenu();
@@ -2329,13 +2328,6 @@ dom.contextMenu.addEventListener("click", async (event) => {
 			toast(error.message, "error");
 		}
 		return;
-	}
-	if (!event.target.closest('[data-action="compact"]')) return;
-	closeMenus();
-	try {
-		await compactContext();
-	} catch (error) {
-		toast(error.message, "error");
 	}
 });
 
@@ -2411,7 +2403,7 @@ function applyPlanSetting() {
 }
 
 async function loadSessions() {
-	const data = await api({ type: "dock:sessions" });
+	const data = await api({ type: "tinychat:sessions" });
 	state.sessions = Array.isArray(data) ? data : data?.sessions ?? [];
 	state.sessionTotal = Array.isArray(data)
 		? state.sessions.length
@@ -2560,7 +2552,7 @@ function confirmDeleteSessions({ ids, all = false, count, name }) {
 		onConfirm: async () => {
 			try {
 				const result = await api({
-					type: "dock:delete_sessions",
+					type: "tinychat:delete_sessions",
 					...(all ? { all: true } : { ids }),
 				});
 				const deleted = Number(result?.deleted) || 0;
@@ -2832,7 +2824,7 @@ function renderMessage(message, index, ctx) {
 	if (message.role === "user") return renderUser(message);
 	if (message.role === "assistant") return renderAssistant(message, index, ctx, false);
 	if (message.role === "toolResult") {
-		if (ctx.calls.has(message.toolCallId) || message.toolName === "dock_plan") {
+		if (ctx.calls.has(message.toolCallId) || isPlanTool(message.toolName)) {
 			const skip = document.createElement("div");
 			skip.hidden = true;
 			return skip;
@@ -2963,7 +2955,7 @@ function renderBlocks(blocks, prefix, ctx, { live = false } = {}) {
 			return;
 		}
 		if (block.type === "toolCall") {
-			if (block.name === "dock_plan" || state.tools[block.id]?.name === "dock_plan") return;
+			if (isPlanTool(block.name) || isPlanTool(state.tools[block.id]?.name)) return;
 			const result = ctx.results.get(block.id);
 			const tool = state.tools[block.id];
 			const args = tool?.args ?? block.arguments ?? parseArgs(block.partialArgs);
@@ -3466,7 +3458,7 @@ function showBanner(text, action) {
 async function restartPi() {
 	dom.banner.hidden = true;
 	try {
-		await api({ type: "dock:restart" });
+		await api({ type: "tinychat:restart" });
 		await refreshSnapshot();
 	} catch (error) {
 		state.piDown = error.message;
@@ -3612,7 +3604,7 @@ async function boot() {
 
 async function bootRefresh() {
 	try {
-		await api({ type: "dock:restart" }).catch(() => {});
+		await api({ type: "tinychat:restart" }).catch(() => {});
 		await refreshSnapshot();
 	} catch (error) {
 		showBanner(t("banner.connectFailed", { message: error.message }), { label: t("banner.retry"), action: () => bootRefresh() });

@@ -1,5 +1,5 @@
 /**
- * Pi types Dock consumes, derived from the official packages.
+ * Pi types consumed by Pi TinyChat, derived from the official packages.
  *
  * The Pi packages are devDependencies only: no runtime dependency is added,
  * but the RPC wire protocol, session JSONL, and extension API are checked
