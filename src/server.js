@@ -136,11 +136,6 @@ export async function createDock({
 	host = "127.0.0.1",
 	piArgs = [],
 }) {
-	const assets = new Map();
-	for (const [path, [file, type]] of Object.entries(ASSETS)) {
-		assets.set(path, { body: await readFile(join(PUBLIC_DIR, file)), type });
-	}
-
 	const clients = new Set();
 	const runtimes = new Map();
 	const startingSessions = new Map();
@@ -805,28 +800,32 @@ export async function createDock({
 			return;
 		}
 
-		const asset = assets.get(url.pathname);
+		const asset = ASSETS[url.pathname];
 		if (!asset) {
 			response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
 			response.end("Not found");
 			return;
 		}
+		const [file, type] = asset;
 		// The HTML shell needs the session token; the assets it references do not
 		// contain any secret and are served without one so the page can boot.
-		const needsToken = asset.type.startsWith("text/html");
+		const needsToken = type.startsWith("text/html");
 		if (needsToken && !authorized(request, url)) {
 			response.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
 			response.end("Unauthorized — open the URL printed by pi-tinychat");
 			return;
 		}
 		response.writeHead(200, {
-			"content-type": asset.type,
+			"content-type": type,
 			"cache-control": "no-store",
 			"content-security-policy": CONTENT_SECURITY_POLICY,
 			"referrer-policy": "no-referrer",
 			"x-content-type-options": "nosniff",
 		});
-		response.end(request.method === "HEAD" ? undefined : asset.body);
+		// Read on every request so UI edits show up on reload without a restart.
+		response.end(
+			request.method === "HEAD" ? undefined : await readFile(join(PUBLIC_DIR, file)),
+		);
 	});
 
 	const heartbeat = setInterval(() => {
