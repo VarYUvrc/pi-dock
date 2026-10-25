@@ -44,7 +44,7 @@ function ringOffset() {
 }
 
 function elapsedSeconds(text) {
-	const match = /^(\d+)h(\d{2})m(\d{2})s$/.exec(text ?? "");
+	const match = /^(\d{2,})h (\d{2})m (\d{2})s$/.exec(text ?? "");
 	if (!match) return NaN;
 	return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
 }
@@ -55,14 +55,14 @@ async function rpc(command) {
 		headers: {
 			"content-type": "application/json",
 			origin: `http://127.0.0.1:${dock.port}`,
-			"x-pi-dock-token": dock.token,
+			"x-pi-tinychat-token": dock.token,
 		},
 	});
 	return response.json();
 }
 
 test("loads the shell and enforces the token", async () => {
-	await expect(page.locator(".brand")).toContainText("Pi-dock");
+	await expect(page.locator(".brand")).toContainText("Pi TinyChat");
 	await expect(page.locator("#projectName")).toHaveText("project");
 	await expect(page.locator("#projectName .icon use")).toHaveAttribute("href", "#i-folder");
 	await expect(page.locator(".top-actions > #projectName + #modelGroup")).toHaveCount(1);
@@ -161,7 +161,7 @@ test("streams a reply with thinking, tools, markdown and copy", async () => {
 	const tool = work.locator('details[data-testid="tool"]').first();
 	expect(await tool.evaluate((node) => node.open)).toBe(false);
 	await tool.locator("summary").click();
-	await expect(tool).toContainText("引数");
+	await expect(tool).toContainText("Arguments");
 	await expect(tool).toContainText("echo hi");
 	await expect(tool).toContainText("hi from fake pi");
 	await expect(tool.locator(".dot")).toHaveClass(/done/);
@@ -175,7 +175,7 @@ test("streams a reply with thinking, tools, markdown and copy", async () => {
 	const clipboard = await page.evaluate(() => navigator.clipboard.readText());
 	expect(clipboard).toBe("const answer = 42;");
 	const ring = await page.locator("#contextButton").getAttribute("title");
-	expect(ring).toContain("コンテキスト");
+	expect(ring).toContain("Context");
 });
 
 test("groups multiple tools into a stable work rail and keeps failures visible", async () => {
@@ -190,8 +190,8 @@ test("groups multiple tools into a stable work rail and keeps failures visible",
 	const work = groups.last();
 	await expect(work).toHaveAttribute("data-status", "done");
 	await expect(work.locator(".work-dot.done")).toHaveCount(3);
-	await expect(work.locator(".work-label")).toHaveText("bash・read・grep");
-	await expect(work.locator(".work-label")).toHaveAttribute("title", "bash・read・grep");
+	await expect(work.locator(".work-label")).toHaveText("bash · read · grep");
+	await expect(work.locator(".work-label")).toHaveAttribute("title", "bash · read · grep");
 	const railWidth = await work
 		.locator(".work-rail")
 		.evaluate((node) => node.getBoundingClientRect().width);
@@ -304,7 +304,7 @@ test("uses reasoning, then tool names, then plain-thinking labels", async () => 
 	);
 	await expectDone();
 	const blank = page.getByTestId("work-group").last();
-	await expect(blank.locator(".work-label")).toHaveText("思考");
+	await expect(blank.locator(".work-label")).toHaveText("Thinking");
 });
 
 test("keeps an open live work group stable while its heading streams", async () => {
@@ -341,14 +341,14 @@ test("refreshes the context ring while a response is streaming", async () => {
 	await expect.poll(ringOffset, { timeout: 10_000 }).not.toBe(before);
 	await expectDone();
 	await expect(button).not.toHaveClass(/running/);
-	expect(await button.getAttribute("title")).toContain("コンテキスト");
+	expect(await button.getAttribute("title")).toContain("Context");
 	// The dark arc has to actually grow with the reported usage.
 	const offset = await ringOffset();
 	expect(offset).toBeLessThan(47.12);
 	expect(offset).toBeGreaterThan(0);
 });
 
-test("sets per-model compaction in Pi settings without losing other settings", async () => {
+test("stores the compaction threshold as a global percentage", async () => {
 	const settingsFile = join(workspace.agent, "settings.json");
 	await writeFile(
 		settingsFile,
@@ -356,67 +356,51 @@ test("sets per-model compaction in Pi settings without losing other settings", a
 			{ theme: "dark", compaction: { keepRecentTokens: 12_345 } },
 			null,
 			2,
-		)}\n`,
+		)}
+`,
 	);
 	await page.reload();
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
 	await page.locator("#contextButton").click();
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
 	await expect(
-		page.locator("#contextMenu .setting-row").filter({ hasText: "自動圧縮" }),
+		page.locator("#contextMenu .setting-row").filter({ hasText: "Auto-compaction" }),
 	).toHaveCount(1);
 	await page.getByTestId("compaction-25").click();
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "true");
-	await expect(page.locator("#contextButton")).toHaveAttribute("title", /自動圧縮 25%/);
-	await expect(page.getByTestId("compaction-toggle")).toHaveCount(0);
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /Auto-compaction 25%/);
 	const meter = page.getByTestId("compaction-meter");
 	await expect(meter).toBeVisible();
-	await expect(meter).toContainText("1.2k / 8k (15%)");
-	const fill = await meter
-		.locator(".compaction-meter-fill")
-		.evaluate((node) => node.getBoundingClientRect().width / node.parentElement.getBoundingClientRect().width);
-	expect(fill).toBeCloseTo(0.154, 2);
+	await expect(meter).toContainText("1.2k / 250k (0%)");
 
 	let saved = JSON.parse(await readFile(settingsFile, "utf8"));
 	expect(saved.theme).toBe("dark");
 	expect(saved.compaction.keepRecentTokens).toBe(12_345);
-	expect(saved.compaction.modelOverrides["fake/fake-fast"].reserveTokens).toBe(24_000);
+	expect(saved.compaction.reserveTokens).toBe(750_000);
+	expect(saved.compaction.modelOverrides).toBeUndefined();
+
+	await page.getByTestId("compaction-50").click();
+	await expect(page.getByTestId("compaction-50")).toHaveAttribute("aria-pressed", "true");
+	saved = JSON.parse(await readFile(settingsFile, "utf8"));
+	expect(saved.compaction.reserveTokens).toBe(500_000);
 
 	await page.getByTestId("compaction-default").click();
-	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
+	await expect(page.getByTestId("compaction-50")).toHaveAttribute("aria-pressed", "false");
+	await expect(page.getByTestId("compaction-default")).toHaveAttribute("aria-pressed", "true");
 	saved = JSON.parse(await readFile(settingsFile, "utf8"));
-	expect(saved.compaction.modelOverrides).toBeUndefined();
+	expect(saved.compaction.reserveTokens).toBeUndefined();
 	expect(saved.compaction.keepRecentTokens).toBe(12_345);
 });
 
-test("shows when project compaction settings take precedence", async () => {
-	await mkdir(join(workspace.project, ".pi"), { recursive: true });
-	await writeFile(
-		join(workspace.project, ".pi", "settings.json"),
-		`${JSON.stringify(
-			{
-				compaction: {
-					modelOverrides: { "fake/fake-fast": { reserveTokens: 16_000 } },
-				},
-			},
-			null,
-			2,
-		)}\n`,
-	);
-	await page.reload();
-	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+test("shows the Pi default compaction before a threshold is chosen", async () => {
 	await page.locator("#contextButton").click();
-	await expect(page.getByTestId("compaction-project-note")).toBeVisible();
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
-
-	await page.getByTestId("compaction-25").click();
-	await expect(
-		page.getByTestId("toast").filter({ hasText: "プロジェクト設定が優先" }),
-	).toBeVisible();
-	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
-
-	const saved = JSON.parse(await readFile(join(workspace.agent, "settings.json"), "utf8"));
-	expect(saved.compaction.modelOverrides["fake/fake-fast"].reserveTokens).toBe(24_000);
+	await expect(page.getByTestId("compaction-default")).toBeVisible();
+	await expect(page.getByTestId("compaction-default")).toHaveAttribute("aria-pressed", "true");
+	await expect(page.locator('[data-compaction-percent="98"]')).toHaveCount(0);
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /Auto-compaction 98%/);
+	const saved = await readFile(join(workspace.agent, "settings.json"), "utf8").catch(() => "");
+	expect(saved).toBe("");
 });
 
 test("Enter inserts a newline and never sends", async () => {
@@ -485,8 +469,15 @@ test("Ctrl+Enter setting is honoured and persisted", async () => {
 
 	const writes = await page.evaluate(() => window.__storageWrites);
 	expect(writes).toBe(1);
-	const stored = await page.evaluate(() => localStorage.getItem("pi-dock:settings"));
-	expect(JSON.parse(stored)).toEqual({ ctrlEnterSend: false, theme: "system", planWidth: 284 });
+	const stored = await page.evaluate(() => localStorage.getItem("pi-tinychat:settings"));
+	expect(JSON.parse(stored)).toEqual({
+		ctrlEnterSend: false,
+		theme: "system",
+		planWidth: 284,
+		plan: true,
+		planPanelVisible: true,
+		language: null,
+	});
 
 	await page.reload();
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
@@ -655,12 +646,12 @@ test("chooses steer or follow-up while a response is running", async () => {
 	await expect(page.locator('[data-send-mode="followUp"]')).toHaveAttribute("aria-pressed", "true");
 	await input().fill("after this");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("1 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("1 queued");
 
 	await page.locator('[data-send-mode="steer"]').click();
 	await input().fill("now this");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("2 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("2 queued");
 
 	await page.locator("#stopButton").click();
 	await expectDone();
@@ -674,10 +665,10 @@ test("keeps consecutive steer messages in the order they were sent", async () =>
 
 	await input().fill("first steer");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("1 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("1 queued");
 	await input().fill("second steer");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("2 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("2 queued");
 	await expectDone();
 
 	const users = page.getByTestId("message-user");
@@ -739,16 +730,15 @@ test("keeps the plan on the right and only shows the current plan", async () => 
 	}
 	await expect(page.locator(".plan-item.done")).toHaveCount(5);
 
-	// A completed plan belongs to the turn that completed it. A new user
-	// message leaves the right panel empty until the agent updates the plan.
+	// A completed plan stays visible until the agent replaces or clears it.
 	await send("hello");
 	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
 		timeout: 10_000,
 	});
-	await expect(page.getByTestId("plan-item")).toHaveCount(0);
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
 	await expect(plan).toBeVisible();
 
-	// Continuing the same work brings the same plan back, with a new item.
+	// Continuing the same work keeps the plan and appends an item.
 	await send("plan continue");
 	await expect(page.getByTestId("plan-item")).toHaveCount(6);
 	await expect(page.getByTestId("plan-item").last()).toHaveAttribute("data-status", "pending");
@@ -791,7 +781,7 @@ test("resizes the plan panel by dragging its edge", async () => {
 	await page.mouse.up();
 	await expect.poll(async () => (await panel.boundingBox()).width).toBeGreaterThan(initial + 60);
 	const stored = await page.evaluate(
-		() => JSON.parse(localStorage.getItem("pi-dock:settings")).planWidth,
+		() => JSON.parse(localStorage.getItem("pi-tinychat:settings")).planWidth,
 	);
 	expect(stored).toBeGreaterThan(initial + 60);
 
@@ -810,6 +800,8 @@ test("opens the plan in a drawer on narrow screens", async () => {
 
 	await page.locator("#planToggle").click();
 	await expect(page.locator(".app")).toHaveClass(/plan-open/);
+	await expect(page.locator("#planToggle")).toHaveAttribute("aria-pressed", "true");
+	await expect(page.locator("#planToggle")).toHaveAttribute("aria-expanded", "true");
 	await expect(page.locator("#planBackdrop")).toBeVisible();
 	await expect
 		.poll(async () => (await page.locator("#planPanel").boundingBox()).x)
@@ -817,7 +809,98 @@ test("opens the plan in a drawer on narrow screens", async () => {
 
 	await page.locator("#planClose").click();
 	await expect(page.locator(".app")).not.toHaveClass(/plan-open/);
+	await expect(page.locator("#planToggle")).toHaveAttribute("aria-pressed", "false");
 	await expect(page.locator("#planBackdrop")).toBeHidden();
+
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await expect(page.locator("#planPanel")).toBeVisible();
+	await expect(page.locator("#planToggle")).toHaveAttribute("aria-pressed", "true");
+	await expect(page.locator("#planToggle")).toHaveAttribute("aria-expanded", "true");
+});
+
+test("shows the plan before the assistant finishes and keeps it afterwards", async () => {
+	await send("plan slow start");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await expect(page.locator("#stopButton")).toBeVisible();
+	await expectDone();
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await send("hello");
+	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
+		timeout: 10_000,
+	});
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+});
+
+test("toggles the plan panel from the topbar at normal width", async () => {
+	const toggle = page.locator("#planToggle");
+	const panel = page.locator("#planPanel");
+	const chat = page.locator(".chat");
+	await expect(toggle).toBeVisible();
+	await expect(toggle).toHaveAttribute("aria-pressed", "true");
+	const wide = (await chat.boundingBox()).width;
+
+	await toggle.click();
+	await expect(panel).toBeHidden();
+	await expect(toggle).toHaveAttribute("aria-pressed", "false");
+	await expect.poll(async () => (await chat.boundingBox()).width).toBeGreaterThan(wide);
+
+	// A plan update must not reopen a panel the user hid.
+	await send("plan start");
+	await expectDone();
+	await expect(panel).toBeHidden();
+
+	await page.reload();
+	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+	await expect(panel).toBeHidden();
+	await expect(toggle).toHaveAttribute("aria-pressed", "false");
+	await toggle.click();
+	await expect(panel).toBeVisible();
+	await expect(toggle).toHaveAttribute("aria-pressed", "true");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+});
+
+test("disables the plan UI from settings and restores the current plan", async () => {
+	await send("plan start");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await expectDone();
+
+	await page.locator("#settingsButton").click();
+	const planToggle = page.getByTestId("plan-setting-toggle");
+	await expect(planToggle).toHaveAttribute("aria-checked", "true");
+	await planToggle.click();
+	await expect(planToggle).toHaveAttribute("aria-checked", "false");
+	await expect(page.locator("#planToggle")).toBeHidden();
+	await expect(page.locator("#planPanel")).toBeHidden();
+	await expect(page.getByTestId("plan-item")).toHaveCount(0);
+
+	await planToggle.click();
+	await expect(planToggle).toHaveAttribute("aria-checked", "true");
+	await expect(page.locator("#planPanel")).toBeVisible();
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+});
+
+test("switches to English without reloading and persists it", async () => {
+	const html = page.locator("html");
+	await expect(html).toHaveAttribute("lang", "ja");
+	await page.locator("#settingsButton").click();
+	await expect(page.locator("#settingsMenu")).toContainText("Language");
+	await expect(page.getByTestId("language-select")).toHaveValue("ja");
+	await page.getByTestId("language-select").selectOption("en");
+	await expect(html).toHaveAttribute("lang", "en");
+	await expect(page.getByTestId("language-select")).toHaveValue("en");
+	await expect(page.locator("#settingsMenu")).toContainText("Theme");
+	await expect(page.locator("#settingsMenu")).toContainText("Language");
+	await expect(page.locator("#settingsButton")).toHaveAttribute("aria-label", "Settings");
+	await expect(page.locator("#planTitle")).toHaveText("Plan");
+
+	await page.reload();
+	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+	await expect(html).toHaveAttribute("lang", "en");
+	await page.locator("#settingsButton").click();
+	await expect(page.getByTestId("language-select")).toHaveValue("en");
+	await page.getByTestId("language-select").selectOption("ja");
+	await expect(html).toHaveAttribute("lang", "ja");
+	await expect(page.locator("#settingsMenu")).toContainText("Language");
 });
 
 test("restores only the active branch plan after resuming", async () => {
@@ -973,7 +1056,7 @@ test("selects and deletes all history beyond the old 60 item limit", async () =>
 	await expect(page.getByTestId("session-more")).toHaveCount(0);
 	await page.locator("#historySelect").click();
 	await page.locator("#historySelectAll").click();
-	await expect(page.locator("#historyCount")).toHaveText("64 件");
+	await expect(page.locator("#historyCount")).toHaveText("64 items");
 	await page.locator("#historyDelete").click();
 	await expect(page.locator("#dialog")).toContainText("64 件");
 	await page.getByTestId("local-dialog-confirm").click();
@@ -1004,7 +1087,7 @@ test("rejects unknown paths and never deletes another project", async () => {
 	});
 	expect(traversal.ok).toBe(true);
 	expect(traversal.data.deleted).toBe(0);
-	expect(traversal.data.failed[0].error).toContain("見つかりません");
+	expect(traversal.data.failed[0].errorKey).toBe("server.sessionNotFound");
 
 	const removed = await rpc({ type: "dock:delete_sessions", all: true });
 	expect(removed.ok).toBe(true);
@@ -1028,7 +1111,7 @@ test("protects the active session from deletion", async () => {
 	});
 	expect(result.ok).toBe(true);
 	expect(result.data.deleted).toBe(0);
-	expect(result.data.failed[0].error).toContain("使用中");
+	expect(result.data.failed[0].errorKey).toBe("server.sessionInUse");
 	await expect(access(currentFile)).resolves.toBeUndefined();
 });
 
@@ -1037,14 +1120,14 @@ test("answers extension dialogs through RPC", async () => {
 	const dialog = page.locator("#dialog");
 	await expect(dialog).toBeVisible();
 	await expect(dialog).toContainText("実行しますか？");
-	await expect(dialog.getByRole("button", { name: "はい" })).toBeFocused();
-	await dialog.getByRole("button", { name: "はい" }).click();
+	await expect(dialog.getByRole("button", { name: "Yes" })).toBeFocused();
+	await dialog.getByRole("button", { name: "Yes" }).click();
 	await expect(page.locator("#dialogLayer")).toBeHidden();
 	await expect(page.getByTestId("message-assistant").last()).toContainText("confirmed=true");
 
 	await send("ask again");
 	await expect(page.locator("#dialog")).toBeVisible();
-	await page.locator("#dialog").getByRole("button", { name: "キャンセル" }).click();
+	await page.locator("#dialog").getByRole("button", { name: "Cancel" }).click();
 	await expect(page.getByTestId("message-assistant").last()).toContainText("confirmed=false");
 });
 
@@ -1135,13 +1218,13 @@ test("shows the current run elapsed time and keeps it across reloads", async () 
 	await send("long please");
 	const elapsed = page.getByTestId("run-elapsed");
 	await expect(elapsed).toBeVisible({ timeout: 10_000 });
-	await expect(elapsed).toHaveText(/^\d+h\d{2}m\d{2}s$/);
-	await expect(elapsed).not.toHaveText("0h00m00s", { timeout: 5000 });
+	await expect(elapsed).toHaveText(/^\d{2,}h \d{2}m \d{2}s$/);
+	await expect(elapsed).not.toHaveText("00h 00m 00s", { timeout: 5000 });
 	const before = elapsedSeconds(await elapsed.textContent());
 
 	await input().fill("steer please");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("1 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("1 queued");
 	await page.waitForTimeout(1200);
 	const after = elapsedSeconds(await elapsed.textContent());
 	expect(after).toBeGreaterThanOrEqual(before + 1);
@@ -1150,8 +1233,8 @@ test("shows the current run elapsed time and keeps it across reloads", async () 
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
 	const restored = page.getByTestId("run-elapsed");
 	await expect(restored).toBeVisible({ timeout: 10_000 });
-	await expect(restored).toHaveText(/^\d+h\d{2}m\d{2}s$/);
-	await expect(restored).not.toHaveText("0h00m00s");
+	await expect(restored).toHaveText(/^\d{2,}h \d{2}m \d{2}s$/);
+	await expect(restored).not.toHaveText("00h 00m 00s");
 
 	await expectDone();
 	await expect(page.getByTestId("run-elapsed")).toHaveCount(0);
@@ -1232,7 +1315,7 @@ test("keeps the previous run alive when starting a new chat", async () => {
 	await expect(page.getByTestId("message-assistant")).toContainText("chunk 129");
 });
 
-test("runs Dock built-in slash commands", async () => {
+test("runs Pi TinyChat built-in slash commands", async () => {
 	await input().fill("/compact");
 	await input().press("Control+Enter");
 	await expect(page.getByTestId("toast").filter({ hasText: "圧縮しました" })).toBeVisible();
@@ -1256,7 +1339,7 @@ test("stopping restores queued steering text", async () => {
 	await expect(page.getByTestId("message-live")).toContainText("chunk 2");
 	await input().fill("keep this for later");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("1 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("1 queued");
 	await page.locator("#stopButton").click();
 	await expectDone();
 	await expect(input()).toHaveValue("keep this for later");
@@ -1273,8 +1356,8 @@ test("compacts the context from the menu", async () => {
 	// Directly after compaction Pi may have no valid context estimate yet.
 	// Show an empty ring without inventing a value or adding a "unknown" label.
 	await expect(page.locator("#contextButton")).toHaveClass(/unknown/);
-	await expect(page.locator("#contextButton")).toHaveAttribute("title", /コンテキスト/);
-	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /不明/);
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /Context/);
+	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /unknown/);
 	await expect(page.locator("#ringFg")).toBeVisible();
 	await expect.poll(ringOffset).toBeCloseTo(47.12, 1);
 
@@ -1309,7 +1392,7 @@ test("blocks cross-origin and bad-host requests", async () => {
 		data: { type: "dock:snapshot" },
 		headers: {
 			"content-type": "application/json",
-			"x-pi-dock-token": dock.token,
+			"x-pi-tinychat-token": dock.token,
 			origin: "http://evil.example",
 		},
 	});

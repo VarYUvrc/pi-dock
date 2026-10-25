@@ -1,8 +1,17 @@
+import { LANGUAGES, getLanguage, normalizeLanguage, setLanguage, t } from "./i18n.js";
 import { escapeHtml, renderMarkdown } from "./markdown.js";
 
 const TOKEN = new URLSearchParams(location.search).get("token") ?? "";
-const STORAGE_KEY = "pi-dock:settings";
-const DEFAULT_SETTINGS = { ctrlEnterSend: true, theme: "system", planWidth: 284 };
+const STORAGE_KEY = "pi-tinychat:settings";
+const LEGACY_STORAGE_KEY = "pi-dock:settings";
+const DEFAULT_SETTINGS = {
+	ctrlEnterSend: true,
+	theme: "system",
+	planWidth: 284,
+	plan: true,
+	planPanelVisible: true,
+	language: null,
+};
 const PLAN_MIN_WIDTH = 220;
 const PLAN_MAX_WIDTH = 640;
 const THEMES = ["system", "light", "dark"];
@@ -76,6 +85,7 @@ const dom = {
 };
 
 const settings = loadSettings();
+setLanguage(settings.language ?? undefined);
 const state = {
 	ready: false,
 	connected: false,
@@ -148,7 +158,8 @@ let dialogReturnFocus = null;
 
 function loadSettings() {
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
+		const raw =
+			localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
 		if (!raw) return { ...DEFAULT_SETTINGS };
 		const parsed = JSON.parse(raw);
 		if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SETTINGS };
@@ -157,6 +168,9 @@ function loadSettings() {
 			ctrlEnterSend: parsed.ctrlEnterSend !== false,
 			theme: THEMES.includes(parsed.theme) ? parsed.theme : "system",
 			planWidth: Number.isFinite(parsed.planWidth) ? parsed.planWidth : DEFAULT_SETTINGS.planWidth,
+			plan: parsed.plan !== false,
+			planPanelVisible: parsed.planPanelVisible !== false,
+			language: normalizeLanguage(parsed.language),
 		};
 	} catch {
 		return { ...DEFAULT_SETTINGS };
@@ -171,6 +185,9 @@ function saveSettings() {
 				ctrlEnterSend: settings.ctrlEnterSend,
 				theme: settings.theme,
 				planWidth: settings.planWidth,
+				plan: settings.plan,
+				planPanelVisible: settings.planPanelVisible,
+				language: settings.language,
 			}),
 		);
 	} catch {
@@ -186,6 +203,20 @@ function applyTheme() {
 	document.documentElement.dataset.theme = resolved;
 }
 
+function applyLanguage() {
+	setLanguage(settings.language ?? undefined);
+	renderChrome();
+	renderMessages(true);
+	renderPlan();
+	renderRunStatus();
+	if (!dom.historyPanel.hidden) renderSessionList();
+	renderDialog();
+	if (state.menu === "settings") renderSettingsMenu();
+	if (state.menu === "context") renderContextMenu();
+	if (state.commandMenu) renderCommandMenu();
+	if (state.slash) updateSlash();
+}
+
 function onSystemSchemeChange() {
 	if (settings.theme === "system") applyTheme();
 }
@@ -198,7 +229,7 @@ async function api(command) {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
-			...(TOKEN ? { "x-pi-dock-token": TOKEN } : {}),
+			...(TOKEN ? { "x-pi-tinychat-token": TOKEN } : {}),
 		},
 		body: JSON.stringify(command),
 	});
@@ -208,7 +239,12 @@ async function api(command) {
 	} catch {
 		throw new Error(`HTTP ${response.status}`);
 	}
-	if (!body?.ok) throw new Error(body?.error ?? `HTTP ${response.status}`);
+	if (!body?.ok) {
+		const message = body?.errorKey
+			? t(body.errorKey, body.errorParams)
+			: (body?.error ?? `HTTP ${response.status}`);
+		throw new Error(message);
+	}
 	return body.data;
 }
 
@@ -262,7 +298,7 @@ async function refreshSnapshot() {
 	state.models = snapshot.models ?? [];
 	state.levels = snapshot.levels?.length ? snapshot.levels : ["off"];
 	state.commands = snapshot.commands ?? [];
-	state.plan = snapshot.plan ?? null;
+	state.plan = settings.plan ? (snapshot.plan ?? null) : null;
 	state.statuses =
 		snapshot.statuses && typeof snapshot.statuses === "object" ? { ...snapshot.statuses } : {};
 	state.widgets =
@@ -339,7 +375,7 @@ function handleRecord(record) {
 			return;
 		}
 		case "dock:exit":
-			state.piDown = record.reason ?? "Pi との接続が切れました";
+			state.piDown = record.reason ?? t("server.notConnected");
 			state.running = false;
 			state.runStartedAt = null;
 			state.compacting = false;
@@ -359,6 +395,7 @@ function handleRecord(record) {
 			renderRunStatus();
 			return;
 		case "dock:plan":
+			if (!settings.plan) return;
 			state.plan = record.plan ?? null;
 			renderPlan();
 			return;
@@ -454,7 +491,7 @@ function handleRecord(record) {
 			onExtensionUi(record);
 			return;
 		case "extension_error":
-			toast(record.error ?? "拡張でエラーが発生しました", "error");
+			toast(record.error ?? t("error.extension"), "error");
 			return;
 		default:
 			return;
@@ -605,7 +642,6 @@ function messageContext() {
 }
 
 function onUserMessage(message, { start = false } = {}) {
-	hideCompletedPlanForNewTurn();
 	const key = messageKey(message);
 	for (let index = 0; index < state.messages.length; index += 1) {
 		const item = state.messages[index];
@@ -830,7 +866,7 @@ function renderLocalDialog(dialog) {
 	dom.dialogLayer.hidden = false;
 	const parts = [];
 	const h2 = document.createElement("h2");
-	h2.textContent = dialog.title || "確認";
+	h2.textContent = dialog.title || "Confirm";
 	parts.push(h2);
 	const p = document.createElement("p");
 	p.textContent = dialog.message ?? "";
@@ -838,7 +874,7 @@ function renderLocalDialog(dialog) {
 	const actions = document.createElement("div");
 	actions.className = "dialog-actions";
 	actions.append(
-		button("キャンセル", "btn", closeLocalDialog),
+		button("Cancel", "btn", closeLocalDialog),
 		button(dialog.confirmLabel, `btn ${dialog.danger ? "danger" : "primary"}`, async () => {
 			const action = dialog.onConfirm;
 			closeLocalDialog();
@@ -869,7 +905,7 @@ function renderDialog() {
 	dom.dialogLayer.hidden = false;
 	const parts = [];
 	const h2 = document.createElement("h2");
-	h2.textContent = request.title || "確認";
+	h2.textContent = request.title || "Confirm";
 	parts.push(h2);
 
 	if (request.method === "confirm") {
@@ -879,8 +915,8 @@ function renderDialog() {
 		const actions = document.createElement("div");
 		actions.className = "dialog-actions";
 		actions.append(
-			button("キャンセル", "btn", () => respondDialog(request, { confirmed: false })),
-			button("はい", "btn primary", () => respondDialog(request, { confirmed: true })),
+			button("Cancel", "btn", () => respondDialog(request, { confirmed: false })),
+			button("Yes", "btn primary", () => respondDialog(request, { confirmed: true })),
 		);
 		parts.push(actions);
 	} else if (request.method === "select") {
@@ -892,7 +928,7 @@ function renderDialog() {
 		}
 		parts.push(list);
 		parts.push(
-			button("キャンセル", "btn", () => respondDialog(request, { cancelled: true }), "dialog-cancel"),
+			button("Cancel", "btn", () => respondDialog(request, { cancelled: true }), "dialog-cancel"),
 		);
 	} else if (request.method === "input") {
 		const input = document.createElement("input");
@@ -972,7 +1008,7 @@ function dialogActions(onCancel, onConfirm) {
 	const actions = document.createElement("div");
 	actions.className = "dialog-actions";
 	actions.append(
-		button("キャンセル", "btn", onCancel),
+		button("Cancel", "btn", onCancel),
 		button("OK", "btn primary", onConfirm),
 	);
 	return actions;
@@ -984,7 +1020,7 @@ async function send() {
 	const text = dom.input.value.trim();
 	if (!text) return;
 	if (!state.ready) {
-		toast("Pi に接続されていません", "error");
+		toast(t("error.notConnected"), "error");
 		return;
 	}
 	const slash = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text);
@@ -1020,7 +1056,6 @@ async function send() {
 		timestamp: Date.now(),
 		_optimistic: true,
 	});
-	hideCompletedPlanForNewTurn();
 	dom.input.value = "";
 	clearAttachments();
 	autosize();
@@ -1090,12 +1125,12 @@ async function newChat() {
 	try {
 		const result = await api({ type: "new_session" });
 		if (result?.cancelled) {
-			toast("新しい会話はキャンセルされました", "warning");
+			toast(t("chat.newCancelled"), "warning");
 			return;
 		}
 		clearAttachments();
 		await refreshSnapshot();
-		if (wasRunning) toast("前の会話はバックグラウンドで継続します");
+		if (wasRunning) toast(t("chat.previousBackground"));
 		dom.input.focus();
 	} catch (error) {
 		toast(error.message, "error");
@@ -1106,7 +1141,7 @@ async function switchSession(path) {
 	try {
 		const result = await api({ type: "switch_session", sessionPath: path });
 		if (result?.cancelled) {
-			toast("切り替えはキャンセルされました", "warning");
+			toast(t("chat.switchCancelled"), "warning");
 			return;
 		}
 		clearAttachments();
@@ -1152,8 +1187,8 @@ async function setThinkingLevel(level) {
 }
 
 async function compactContext() {
-	if (state.running) throw new Error("実行中は圧縮できません");
-	if (state.compactingRequest) throw new Error("圧縮処理中です");
+	if (state.running) throw new Error(t("compact.running"));
+	if (state.compactingRequest) throw new Error(t("compact.inProgress"));
 	state.compactingRequest = true;
 	state.compacting = true;
 	renderChrome();
@@ -1162,7 +1197,7 @@ async function compactContext() {
 	try {
 		await api({ type: "compact" });
 		await refreshSnapshot();
-		toast("コンテキストを圧縮しました");
+		toast(t("compact.done"));
 	} finally {
 		state.compactingRequest = false;
 		if (!state.running) state.compacting = false;
@@ -1237,7 +1272,7 @@ function readAsDataURL(file) {
 	return new Promise((resolve, reject) => {
 		const reader = new FileReader();
 		reader.onload = () => resolve(String(reader.result ?? ""));
-		reader.onerror = () => reject(reader.error ?? new Error("画像を読み込めません"));
+		reader.onerror = () => reject(reader.error ?? new Error(t("image.readFailed")));
 		reader.readAsDataURL(file);
 	});
 }
@@ -1248,7 +1283,7 @@ async function addImageFiles(files) {
 	let total = state.attachments.reduce((sum, attachment) => sum + attachment.data.length, 0);
 	for (const file of images) {
 		if (state.attachments.length >= MAX_ATTACHMENTS) {
-			toast(`画像は ${MAX_ATTACHMENTS} 枚までです`, "warning");
+			toast(t("image.max", { count: MAX_ATTACHMENTS }), "warning");
 			break;
 		}
 		try {
@@ -1257,7 +1292,7 @@ async function addImageFiles(files) {
 			if (separator === -1) continue;
 			const data = url.slice(separator + 1);
 			if (total + data.length > MAX_ATTACHMENT_DATA) {
-				toast("画像が大きすぎます", "warning");
+				toast(t("image.tooLarge"), "warning");
 				continue;
 			}
 			state.attachments.push({
@@ -1291,7 +1326,7 @@ function renderAttachments() {
 			remove.className = "attachment-remove";
 			remove.dataset.id = attachment.id;
 			remove.dataset.testid = "attachment-remove";
-			remove.setAttribute("aria-label", "画像を削除");
+			remove.setAttribute("aria-label", "Remove image");
 			remove.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>';
 			item.append(image, remove);
 			return item;
@@ -1501,7 +1536,7 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("resize", () => {
 	if (state.menu) closeMenus();
 	if (state.commandMenu) closeCommandMenu();
-	if (window.innerWidth > 1040) closePlanDrawer();
+	syncPlanPanelState();
 	setPlanWidth(settings.planWidth, { commit: false });
 });
 
@@ -1569,19 +1604,19 @@ function initPlanResizer() {
 const DOCK_COMMANDS = [
 	{
 		name: "new",
-		description: "新しい会話を開始",
+		description: "Start a new chat",
 		source: "dock",
 		run: newChat,
 	},
 	{
 		name: "resume",
-		description: "履歴から会話を再開",
+		description: "Resume a chat from history",
 		source: "dock",
 		run: openHistory,
 	},
 	{
 		name: "compact",
-		description: "コンテキストを圧縮",
+		description: "Compact the context",
 		source: "dock",
 		run: async () => {
 			await compactContext();
@@ -1589,66 +1624,66 @@ const DOCK_COMMANDS = [
 	},
 	{
 		name: "model",
-		description: "モデルを選択",
+		description: "Choose a model",
 		source: "dock",
 		run: () => openMenu("model"),
 	},
 	{
 		name: "thinking",
-		description: "推論強度を変更",
+		description: "Change reasoning effort",
 		source: "dock",
 		run: () => openMenu("thinking"),
 	},
 	{
 		name: "settings",
-		description: "設定を開く",
+		description: "Open settings",
 		source: "dock",
 		run: () => openMenu("settings"),
 	},
 	{
 		name: "session",
-		description: "セッションの使用量を表示",
+		description: "Show session usage",
 		source: "dock",
 		run: () => openMenu("context"),
 	},
 	{
 		name: "copy",
-		description: "最後の応答をコピー",
+		description: "Copy the last response",
 		source: "dock",
 		run: async () => {
 			const text = lastAssistantText();
-			if (!text) throw new Error("コピーする応答がありません");
+			if (!text) throw new Error(t("cmd.noResponse"));
 			await copyText(text);
-			toast("最後の応答をコピーしました");
+			toast(t("cmd.copied"));
 		},
 	},
 	{
 		name: "export",
-		description: "セッションをHTMLに書き出す",
+		description: "Export the session as HTML",
 		source: "dock",
 		run: async () => {
 			const result = await api({ type: "export_html" });
-			toast(result?.path ? `書き出しました: ${result.path}` : "書き出しました");
+			toast(result?.path ? t("cmd.exportedPath", { path: result.path }) : t("cmd.exported"));
 		},
 	},
 	{
 		name: "name",
-		description: "セッション名を設定",
+		description: "Set the session name",
 		source: "dock",
 		argument: true,
 		run: async (args) => {
-			if (!args) throw new Error("名前を入力してください（例: /name 作業名）");
+			if (!args) throw new Error(t("cmd.nameRequired"));
 			await api({ type: "set_session_name", name: args });
 			await refreshSnapshot();
-			toast("セッション名を設定しました");
+			toast(t("cmd.nameSet"));
 		},
 	},
 	{
 		name: "reload",
-		description: "Piを再起動して設定を再読み込み",
+		description: "Restart Pi and reload settings",
 		source: "dock",
 		run: async () => {
-			if (state.running) throw new Error("実行中は再読み込みできません");
+			if (state.running) throw new Error(t("cmd.reloadRunning"));
 			await restartPi();
 		},
 	},
@@ -1760,7 +1795,7 @@ function commandSourceLabel(source) {
 }
 
 function commandSourceIcon(source) {
-	if (source === "dock") return "i-dock";
+	if (source === "dock") return "i-tinychat";
 	if (source === "skill") return "i-spark";
 	if (source === "extension") return "i-extension";
 	return "i-prompt";
@@ -1786,7 +1821,7 @@ function openCommandMenu() {
 	closeMenus();
 	closeSlash();
 	state.commandMenu = { query: "", index: 0, items: [] };
-	dom.commandMenu.innerHTML = `<div class="menu-search"><input type="text" placeholder="コマンドを検索" autocomplete="off" spellcheck="false" data-role="command-search" aria-label="コマンドを検索" /></div><div class="command-list" data-role="command-list" role="listbox" aria-label="コマンド"></div>`;
+	dom.commandMenu.innerHTML = `<div class="menu-search"><input type="text" placeholder="Search commands" autocomplete="off" spellcheck="false" data-role="command-search" aria-label="Search commands" /></div><div class="command-list" data-role="command-list" role="listbox" aria-label="Commands"></div>`;
 	dom.commandMenu.hidden = false;
 	dom.commandButton.setAttribute("aria-expanded", "true");
 	renderCommandMenu();
@@ -1817,7 +1852,7 @@ function renderCommandMenu() {
 	const list = dom.commandMenu.querySelector('[data-role="command-list"]');
 	if (!list) return;
 	if (!menu.items.length) {
-		list.innerHTML = '<div class="menu-empty">見つかりません</div>';
+		list.innerHTML = `<div class="menu-empty">Not found</div>`;
 		return;
 	}
 	list.innerHTML = menu.items
@@ -2016,7 +2051,7 @@ function renderModelMenu() {
 	search.className = "menu-search";
 	const input = document.createElement("input");
 	input.type = "text";
-	input.placeholder = "モデル";
+	input.placeholder = "Model";
 	input.autocomplete = "off";
 	input.addEventListener("input", () => renderModelList(input.value));
 	search.append(input);
@@ -2042,7 +2077,7 @@ function renderModelList(filter) {
 	if (!models.length) {
 		const empty = document.createElement("div");
 		empty.className = "menu-empty";
-		empty.textContent = "見つかりません";
+		empty.textContent = "Not found";
 		list.replaceChildren(empty);
 		return;
 	}
@@ -2086,22 +2121,34 @@ function renderThinkingMenu() {
 
 function renderSettingsMenu() {
 	const themeOptions = [
-		["system", "i-monitor", "システム"],
-		["light", "i-sun", "ライト"],
-		["dark", "i-moon", "ダーク"],
+		["system", "i-monitor", "System"],
+		["light", "i-sun", "Light"],
+		["dark", "i-moon", "Dark"],
 	]
 		.map(
 			([value, icon, label]) =>
 				`<button type="button" data-theme-option="${value}" aria-pressed="${settings.theme === value}" aria-label="${label}" title="${label}"><svg class="icon" aria-hidden="true"><use href="#${icon}"/></svg></button>`,
 		)
 		.join("");
+	const languageOptions = LANGUAGES.map(
+		(entry) =>
+			`<option value="${entry.value}"${getLanguage() === entry.value ? " selected" : ""}>${entry.label}</option>`,
+	).join("");
 	dom.settingsMenu.innerHTML = `<div class="setting-row">
-		<span>テーマ</span>
-		<div class="segmented" role="group" aria-label="テーマ">${themeOptions}</div>
+		<span>Theme</span>
+		<div class="segmented" role="group" aria-label="Theme">${themeOptions}</div>
 	</div>
 	<div class="setting-row">
-		<span>Ctrl+Enter で送信</span>
-		<button type="button" class="switch" role="switch" aria-checked="${settings.ctrlEnterSend}" aria-label="Ctrl+Enterで送信" data-testid="ctrl-enter-toggle"></button>
+		<span>Language</span>
+		<select class="select" data-language-select data-testid="language-select" aria-label="Language">${languageOptions}</select>
+	</div>
+	<div class="setting-row">
+		<span>Send with Ctrl+Enter</span>
+		<button type="button" class="switch" role="switch" aria-checked="${settings.ctrlEnterSend}" aria-label="Send with Ctrl+Enter" data-setting="ctrlEnterSend" data-testid="ctrl-enter-toggle"></button>
+	</div>
+	<div class="setting-row">
+		<span>Plan</span>
+		<button type="button" class="switch" role="switch" aria-checked="${settings.plan}" aria-label="Plan" data-setting="plan" data-testid="plan-setting-toggle"></button>
 	</div>`;
 }
 
@@ -2113,30 +2160,33 @@ function renderContextMenu() {
 	const percent = Number.isFinite(usage?.percent) ? Math.round(usage.percent) : null;
 	const cost = typeof state.stats?.cost === "number" ? state.stats.cost : null;
 	const compaction = state.compaction;
+	const contextWindowKnown = Boolean(compaction?.contextWindowKnown);
 	const thresholdPercent = Number.isFinite(compaction?.thresholdPercent)
 		? Math.round(compaction.thresholdPercent)
 		: null;
+	const thresholdIsDefault = compaction?.reserveSource !== "settings";
 	const thresholdTokens = Number.isFinite(compaction?.thresholdTokens)
 		? Math.round(compaction.thresholdTokens)
 		: null;
 	const usedTokens = tokens ?? 0;
 	const rows = [
-		["コンテキスト", percent === null ? "—" : `${percent}%`],
+		["Context", percent === null ? "—" : `${percent}%`],
 		[
-			"トークン",
+			"Tokens",
 			tokens === null
 				? "—"
 				: `${tokens.toLocaleString()}${windowSize ? ` / ${windowSize.toLocaleString()}` : ""}`,
 		],
-		["メッセージ", String(state.stats?.totalMessages ?? state.messages.length)],
+		["Messages", String(state.stats?.totalMessages ?? state.messages.length)],
 	];
-	if (cost) rows.push(["コスト", `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`]);
-	const pressed = (value) => thresholdPercent !== null && thresholdPercent === value;
-	const projectNote = compaction?.projectOverridesReserve
-		? `<div class="compaction-note" data-testid="compaction-project-note" title="${escapeHtml(
-				compaction.projectSettingsPath ?? "",
-			)}">プロジェクト設定が優先</div>`
-		: "";
+	if (cost) rows.push(["Cost", `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`]);
+	const pressed = (value) =>
+		!thresholdIsDefault && thresholdPercent !== null && thresholdPercent === value;
+	const preset = (value) =>
+		`<button type="button" data-compaction-percent="${value}" aria-pressed="${pressed(value)}" data-testid="compaction-${value}"${contextWindowKnown ? "" : " disabled"}>${value}%</button>`;
+	const unknown = contextWindowKnown
+		? ""
+		: `<div class="compaction-note" data-testid="compaction-unknown">The context length is unknown for the current model</div>`;
 	dom.contextMenu.innerHTML =
 		rows
 			.map(
@@ -2145,42 +2195,24 @@ function renderContextMenu() {
 			)
 			.join("") +
 		`<div class="setting-row compaction-row">
-			<span>自動圧縮</span>
-			<div class="compaction-actions" role="group" aria-label="自動圧縮のしきい値">
-				<button type="button" data-compaction-percent="25" aria-pressed="${pressed(25)}" data-testid="compaction-25">25%</button>
-				<button type="button" data-compaction-percent="50" aria-pressed="${pressed(50)}" data-testid="compaction-50">50%</button>
-				<button type="button" data-compaction-clear data-testid="compaction-default">既定</button>
+			<span>Auto-compaction</span>
+			<div class="compaction-actions" role="group" aria-label="Auto-compaction threshold">
+				${preset(25)}
+				${preset(50)}
+				${preset(75)}
+				<button type="button" data-compaction-clear data-testid="compaction-default" aria-pressed="${thresholdIsDefault}"${contextWindowKnown ? "" : " disabled"}>Pi default</button>
 			</div>
 		</div>
-		${projectNote}
+		${unknown}
 		${compactionMeterMarkup(usedTokens, thresholdTokens)}` +
 		(state.running || state.compacting || state.compactingRequest
 			? ""
 			: `<div class="setting-row compaction-row">
-				<span>手動圧縮</span>
+				<span>Manual compaction</span>
 				<div class="compaction-actions">
-					<button type="button" data-action="compact" data-testid="compact-button" title="コンテキストを圧縮">実行</button>
+					<button type="button" data-action="compact" data-testid="compact-button" title="Compact the context">Run</button>
 				</div>
 			</div>`);
-}
-
-function compactionMeterMarkup(usedTokens, thresholdTokens) {
-	if (thresholdTokens === null) return "";
-	const ratio = thresholdTokens > 0 ? usedTokens / thresholdTokens : 0;
-	const fill = Math.max(0, Math.min(100, ratio * 100));
-	const percent = Math.max(0, Math.round(ratio * 100));
-	const short = `${formatTokenCount(usedTokens)} / ${formatTokenCount(thresholdTokens)} (${percent}%)`;
-	const full = `${usedTokens.toLocaleString()} / ${thresholdTokens.toLocaleString()} トークン (${percent}%)`;
-	return `<div class="compaction-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(
-		100,
-		percent,
-	)}" aria-valuetext="${escapeHtml(full)}" title="${escapeHtml(
-		full,
-	)}" data-testid="compaction-meter" style="--meter-fill:${fill.toFixed(2)}%">
-		<span class="compaction-meter-fill" aria-hidden="true"></span>
-		<span class="compaction-meter-text">${escapeHtml(short)}</span>
-		<span class="compaction-meter-text on-fill" aria-hidden="true">${escapeHtml(short)}</span>
-	</div>`;
 }
 
 function formatTokenCount(value) {
@@ -2195,6 +2227,25 @@ function formatTokenCount(value) {
 
 function numberOrNull(value) {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function compactionMeterMarkup(usedTokens, thresholdTokens) {
+	if (thresholdTokens === null) return "";
+	const ratio = thresholdTokens > 0 ? usedTokens / thresholdTokens : 0;
+	const fill = Math.max(0, Math.min(100, ratio * 100));
+	const percent = Math.max(0, Math.round(ratio * 100));
+	const short = `${formatTokenCount(usedTokens)} / ${formatTokenCount(thresholdTokens)} (${percent}%)`;
+	const full = `${usedTokens.toLocaleString()} / ${thresholdTokens.toLocaleString()} tokens (${percent}%)`;
+	return `<div class="compaction-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(
+		100,
+		percent,
+	)}" aria-valuetext="${escapeHtml(full)}" title="${escapeHtml(
+		full,
+	)}" data-testid="compaction-meter" style="--meter-fill:${fill.toFixed(2)}%">
+		<span class="compaction-meter-fill" aria-hidden="true"></span>
+		<span class="compaction-meter-text">${escapeHtml(short)}</span>
+		<span class="compaction-meter-text on-fill" aria-hidden="true">${escapeHtml(short)}</span>
+	</div>`;
 }
 
 dom.modelMenu.addEventListener("click", (event) => {
@@ -2225,11 +2276,29 @@ dom.settingsMenu.addEventListener("click", (event) => {
 		}
 		return;
 	}
-	const toggle = event.target.closest(".switch");
+	const toggle = event.target.closest("[data-setting]");
 	if (!toggle) return;
-	settings.ctrlEnterSend = !settings.ctrlEnterSend;
+	if (toggle.dataset.setting === "plan") {
+		settings.plan = !settings.plan;
+		saveSettings();
+		applyPlanSetting();
+		return;
+	}
+	if (toggle.dataset.setting === "ctrlEnterSend") {
+		settings.ctrlEnterSend = !settings.ctrlEnterSend;
+		saveSettings();
+		toggle.setAttribute("aria-checked", String(settings.ctrlEnterSend));
+	}
+});
+
+dom.settingsMenu.addEventListener("change", (event) => {
+	const select = event.target.closest("[data-language-select]");
+	if (!select) return;
+	const next = normalizeLanguage(select.value);
+	if (!next || settings.language === next) return;
+	settings.language = next;
 	saveSettings();
-	toggle.setAttribute("aria-checked", String(settings.ctrlEnterSend));
+	applyLanguage();
 });
 
 dom.contextMenu.addEventListener("click", async (event) => {
@@ -2243,14 +2312,7 @@ dom.contextMenu.addEventListener("click", async (event) => {
 			if (result?.compaction) state.compaction = result.compaction;
 			renderChrome();
 			renderContextMenu();
-			if (result?.compaction?.projectOverridesReserve) {
-				toast(
-					`ユーザー設定に保存しました（プロジェクト設定が優先）`,
-					"warning",
-				);
-			} else {
-				toast(`自動圧縮を ${percentButton.dataset.compactionPercent}% に設定しました`);
-			}
+			toast(t("context.saved", { percent: percentButton.dataset.compactionPercent }));
 		} catch (error) {
 			toast(error.message, "error");
 		}
@@ -2262,11 +2324,7 @@ dom.contextMenu.addEventListener("click", async (event) => {
 			if (result?.compaction) state.compaction = result.compaction;
 			renderChrome();
 			renderContextMenu();
-			if (result?.compaction?.projectOverridesReserve) {
-				toast("ユーザー設定を既定に戻しました（プロジェクト設定が優先）", "warning");
-			} else {
-				toast("自動圧縮を既定に戻しました");
-			}
+			toast(t("context.reset"));
 		} catch (error) {
 			toast(error.message, "error");
 		}
@@ -2283,21 +2341,73 @@ dom.contextMenu.addEventListener("click", async (event) => {
 
 /* ------------------------------------------------------------------ history */
 
+const PLAN_NARROW_QUERY = "(max-width: 1040px)";
+let planDrawerOpen = false;
+
+function planIsNarrow() {
+	return window.matchMedia(PLAN_NARROW_QUERY).matches;
+}
+
+function syncPlanPanelState() {
+	const app = document.querySelector(".app");
+	if (!app) return;
+	const enabled = Boolean(settings.plan);
+	dom.planToggle.hidden = !enabled;
+	if (!enabled) {
+		planDrawerOpen = false;
+		app.classList.remove("plan-open", "plan-collapsed");
+		dom.planBackdrop.hidden = true;
+		dom.planPanel.hidden = true;
+		dom.planResizer.hidden = true;
+		dom.planToggle.setAttribute("aria-pressed", "false");
+		dom.planToggle.setAttribute("aria-expanded", "false");
+		return;
+	}
+	dom.planPanel.hidden = false;
+	if (planIsNarrow()) {
+		app.classList.remove("plan-collapsed");
+		dom.planResizer.hidden = true;
+		app.classList.toggle("plan-open", planDrawerOpen);
+		dom.planBackdrop.hidden = !planDrawerOpen;
+		dom.planToggle.setAttribute("aria-pressed", String(planDrawerOpen));
+		dom.planToggle.setAttribute("aria-expanded", String(planDrawerOpen));
+		return;
+	}
+	planDrawerOpen = false;
+	app.classList.remove("plan-open");
+	dom.planBackdrop.hidden = true;
+	const visible = Boolean(settings.planPanelVisible);
+	app.classList.toggle("plan-collapsed", !visible);
+	dom.planResizer.hidden = !visible;
+	dom.planToggle.setAttribute("aria-pressed", String(visible));
+	dom.planToggle.setAttribute("aria-expanded", String(visible));
+}
+
 function openPlanDrawer() {
+	if (!settings.plan || !planIsNarrow()) return;
 	closeHistory();
 	closeMenus();
 	closeSlash();
 	closeCommandMenu();
-	document.querySelector(".app")?.classList.add("plan-open");
-	dom.planBackdrop.hidden = false;
-	dom.planToggle.setAttribute("aria-expanded", "true");
+	planDrawerOpen = true;
+	syncPlanPanelState();
 	dom.planClose.focus();
 }
 
 function closePlanDrawer() {
-	document.querySelector(".app")?.classList.remove("plan-open");
-	dom.planBackdrop.hidden = true;
-	dom.planToggle.setAttribute("aria-expanded", "false");
+	planDrawerOpen = false;
+	syncPlanPanelState();
+}
+
+function applyPlanSetting() {
+	if (!settings.plan) {
+		state.plan = null;
+		planDrawerOpen = false;
+	}
+	syncPlanPanelState();
+	renderPlan();
+	if (state.menu === "settings") renderSettingsMenu();
+	if (settings.plan) refreshSnapshot().catch(() => {});
 }
 
 async function loadSessions() {
@@ -2334,12 +2444,12 @@ function updateHistoryActions() {
 	dom.historyActions.hidden = !selecting;
 	if (!selecting) return;
 	const count = state.historySelection.size;
-	dom.historyCount.textContent = `${count} 件`;
+	dom.historyCount.textContent = `${count} items`;
 	dom.historyDelete.disabled = count === 0;
 	const eligible = eligibleSessions();
 	const allSelected =
 		eligible.length > 0 && eligible.every((session) => state.historySelection.has(session.id));
-	dom.historySelectAll.textContent = allSelected ? "選択解除" : "全選択";
+	dom.historySelectAll.textContent = allSelected ? "Deselect all" : "Select all";
 }
 
 function openHistory() {
@@ -2368,14 +2478,14 @@ function closeHistory() {
 function renderSessionList() {
 	dom.sessionList.dataset.total = String(state.sessionTotal || state.sessions.length);
 	if (!state.sessions.length) {
-		dom.sessionList.innerHTML = '<div class="session-empty">履歴はありません</div>';
+		dom.sessionList.innerHTML = `<div class="session-empty">No history</div>`;
 		updateHistoryActions();
 		return;
 	}
 	const selecting = state.historySelection instanceof Set;
 	const visible = state.sessions.slice(0, state.historyLimit);
 	const items = visible.map((session, index) => {
-		const name = session.name || session.preview || "無題の会話";
+		const name = session.name || session.preview || t("common.untitled");
 		const preview = session.name ? session.preview : "";
 		const selectable =
 			Boolean(session.id) &&
@@ -2389,7 +2499,7 @@ function renderSessionList() {
 				: "";
 		const trash =
 			!selecting && selectable
-				? `<button type="button" class="session-trash" data-delete-index="${index}" title="削除" aria-label="削除" data-testid="session-delete">
+				? `<button type="button" class="session-trash" data-delete-index="${index}" title="Delete" aria-label="Delete" data-testid="session-delete">
 						<svg class="icon"><use href="#i-trash"/></svg>
 					</button>`
 				: "";
@@ -2405,7 +2515,7 @@ function renderSessionList() {
 			<div class="session-main" data-index="${index}"${interaction}>
 				<span class="s-top"><span class="s-title">${escapeHtml(name)}</span>${
 					session.running
-						? '<span class="s-run" title="実行中" aria-label="実行中"></span>'
+						? `<span class="s-run" title="Running" aria-label="Running"></span>`
 						: ""
 				}<span class="s-time">${escapeHtml(relativeTime(session.modified))}</span></span>
 				${preview ? `<span class="s-preview">${escapeHtml(preview)}</span>` : ""}
@@ -2416,7 +2526,7 @@ function renderSessionList() {
 	const remaining = state.sessions.length - visible.length;
 	if (remaining > 0) {
 		items.push(
-			`<button type="button" class="session-more" data-role="session-more" data-testid="session-more">さらに表示（残り ${remaining} 件）</button>`,
+			`<button type="button" class="session-more" data-role="session-more" data-testid="session-more">Show more (${remaining} remaining)</button>`,
 		);
 	}
 	dom.sessionList.innerHTML = items.join("");
@@ -2427,9 +2537,9 @@ function relativeTime(iso) {
 	const time = new Date(iso).getTime();
 	if (!Number.isFinite(time)) return "";
 	const seconds = Math.max(0, (Date.now() - time) / 1000);
-	if (seconds < 60) return "たった今";
-	if (seconds < 3600) return `${Math.floor(seconds / 60)}分前`;
-	if (seconds < 86_400) return `${Math.floor(seconds / 3600)}時間前`;
+	if (seconds < 60) return "just now";
+	if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+	if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`;
 	const date = new Date(time);
 	const month = date.getMonth() + 1;
 	const day = date.getDate();
@@ -2438,14 +2548,14 @@ function relativeTime(iso) {
 
 function confirmDeleteSessions({ ids, all = false, count, name }) {
 	const message = all
-		? `このプロジェクトの履歴 ${count} 件を完全に削除します。元に戻せません。`
+		? t("history.deleteAll", { count })
 		: count === 1
-			? `「${name || "無題の会話"}」を完全に削除します。元に戻せません。`
-			: `${count} 件の履歴を完全に削除します。元に戻せません。`;
+			? t("history.deleteOne", { name: name || t("common.untitled") })
+			: t("history.deleteMany", { count });
 	showConfirm({
-		title: "履歴を削除",
+		title: t("history.deleteTitle"),
 		message,
-		confirmLabel: "削除",
+		confirmLabel: t("common.delete"),
 		danger: true,
 		onConfirm: async () => {
 			try {
@@ -2456,9 +2566,9 @@ function confirmDeleteSessions({ ids, all = false, count, name }) {
 				const deleted = Number(result?.deleted) || 0;
 				const failed = Array.isArray(result?.failed) ? result.failed : [];
 				if (failed.length) {
-					toast(`${deleted} 件削除、${failed.length} 件失敗`, "warning");
+					toast(t("history.deletedPartial", { deleted, failed: failed.length }), "warning");
 				} else {
-					toast(`${deleted} 件の履歴を削除しました`);
+					toast(t("history.deleted", { deleted }));
 				}
 				cancelHistorySelection();
 				await loadSessions();
@@ -2475,7 +2585,7 @@ function deleteSessionAt(index) {
 	confirmDeleteSessions({
 		ids: [session.id],
 		count: 1,
-		name: session.name || session.preview || "無題の会話",
+		name: session.name || session.preview || t("common.untitled"),
 	});
 }
 
@@ -2508,7 +2618,7 @@ function activateHistoryItem(index) {
 	if (!session || session.current) return;
 	if (session.runtime) activateSession(session.runtime);
 	else if (session.path) switchSession(session.path);
-	else toast("この会話は再開できません", "warning");
+	else toast(t("chat.cannotResume"), "warning");
 }
 
 dom.historyButton.addEventListener("click", openHistory);
@@ -2562,9 +2672,14 @@ dom.sessionList.addEventListener("keydown", (event) => {
 });
 
 dom.planToggle.addEventListener("click", () => {
-	const app = document.querySelector(".app");
-	if (app?.classList.contains("plan-open")) closePlanDrawer();
-	else openPlanDrawer();
+	if (planIsNarrow()) {
+		if (planDrawerOpen) closePlanDrawer();
+		else openPlanDrawer();
+		return;
+	}
+	settings.planPanelVisible = !settings.planPanelVisible;
+	saveSettings();
+	syncPlanPanelState();
 });
 dom.planClose.addEventListener("click", closePlanDrawer);
 dom.planBackdrop.addEventListener("click", closePlanDrawer);
@@ -2600,30 +2715,26 @@ function scheduleLive(immediate = false) {
 	}, LIVE_RENDER_MS);
 }
 
-function planIsComplete(plan) {
-	const items = Array.isArray(plan?.items) ? plan.items : [];
-	return (
-		items.length > 0 &&
-		items.every((item) => item.status === "done" || item.status === "cancelled")
-	);
-}
 
-function hideCompletedPlanForNewTurn() {
-	if (!planIsComplete(state.plan)) return;
-	state.plan = null;
-	renderPlan();
-}
 
 let previousPlanStatuses = new Map();
 
 function renderPlan() {
+	if (!settings.plan) {
+		previousPlanStatuses = new Map();
+		dom.planItems.replaceChildren();
+		dom.planPanel.classList.remove("has-plan");
+		dom.planEmpty.hidden = false;
+		dom.planItems.hidden = true;
+		return;
+	}
 	const plan = state.plan;
 	const items = Array.isArray(plan?.items) ? plan.items : [];
 	const hasPlan = items.length > 0;
 	dom.planPanel.classList.toggle("has-plan", hasPlan);
 	dom.planEmpty.hidden = hasPlan;
 	dom.planItems.hidden = !hasPlan;
-	dom.planTitle.textContent = hasPlan ? plan.title || "計画" : "計画";
+	dom.planTitle.textContent = hasPlan ? plan.title || "Plan" : "Plan";
 	if (!hasPlan) {
 		previousPlanStatuses = new Map();
 		dom.planItems.replaceChildren();
@@ -2742,10 +2853,10 @@ function renderMessage(message, index, ctx) {
 		);
 	}
 	if (message.role === "compactionSummary") {
-		return renderSummaryNote(message.summary, "圧縮", index);
+		return renderSummaryNote(message.summary, "Compaction", index);
 	}
 	if (message.role === "branchSummary") {
-		return renderSummaryNote(message.summary, "分岐", index);
+		return renderSummaryNote(message.summary, "Branch", index);
 	}
 	if (message.role === "custom") {
 		const note = document.createElement("div");
@@ -2791,11 +2902,11 @@ function renderAssistant(message, index, ctx, live) {
 	const blocks = Array.isArray(message.content) ? message.content : [];
 	node.innerHTML = renderBlocks(blocks, `m${index}`, ctx, { live });
 	if (message.stopReason === "aborted") {
-		node.append(note("中断されました"));
+		node.append(note("Stopped"));
 	} else if (message.stopReason === "error") {
-		node.append(note(message.errorMessage || "エラーが発生しました", true));
+		node.append(note(message.errorMessage || "An error occurred", true));
 	} else if (message.stopReason === "length") {
-		node.append(note("出力が上限に達しました"));
+		node.append(note("The output limit was reached"));
 	}
 	return node;
 }
@@ -2920,15 +3031,15 @@ function workHeading(items, status) {
 		const shown = names.slice(0, 3);
 		const rest = names.length - shown.length;
 		return {
-			text: `${shown.join("・")}${rest ? ` ほか${rest}件` : ""}`,
-			title: names.join("・"),
+			text: `${shown.join(" · ")}${rest ? ` +${rest} more` : ""}`,
+			title: names.join(" · "),
 		};
 	}
 
 	if (items.some((item) => item.kind === "thinking")) {
-		return { text: "思考", title: "思考" };
+		return { text: "Thinking", title: "Thinking" };
 	}
-	const fallback = { running: "実行中", error: "エラー", done: "完了" }[status] ?? "完了";
+	const fallback = { running: "Running", error: "Error", done: "Done" }[status] ?? "Done";
 	return { text: fallback, title: fallback };
 }
 
@@ -2948,17 +3059,17 @@ function toolKind(name) {
 }
 
 const TOOL_KIND_LABELS = {
-	read: "読み取り",
-	edit: "編集",
-	write: "書き込み",
-	command: "コマンド",
+	read: "Read",
+	edit: "Edit",
+	write: "Write",
+	command: "Command",
 	web: "Web",
-	search: "検索",
-	list: "一覧",
-	image: "画像",
-	plan: "計画",
-	agent: "エージェント",
-	tool: "ツール",
+	search: "Search",
+	list: "List",
+	image: "Image",
+	plan: "Plan",
+	agent: "Agent",
+	tool: "Tool",
 };
 
 function workToolKinds(items) {
@@ -2986,7 +3097,7 @@ function workMarkup(items, key, prefix) {
 	const kinds = workToolKinds(items);
 	const tools = kinds.length
 		? `<span class="work-tools" title="${escapeHtml(
-				kinds.map((kind) => TOOL_KIND_LABELS[kind] ?? kind).join("・"),
+				kinds.map((kind) => TOOL_KIND_LABELS[kind] ?? kind).join(" · "),
 			)}" aria-hidden="true">${kinds
 				.map((kind) => `<svg class="icon"><use href="#i-${kind}"/></svg>`)
 				.join("")}</span>`
@@ -2995,7 +3106,7 @@ function workMarkup(items, key, prefix) {
 		.map((item) => {
 			if (item.kind === "thinking") {
 				return `<div class="work-thinking">
-					<div class="work-item-head"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg><span>思考</span></div>
+					<div class="work-item-head"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg><span>Thinking</span></div>
 					<div class="thinking-text">${escapeHtml(item.text)}</div>
 				</div>`;
 			}
@@ -3086,8 +3197,8 @@ function toolCardMarkup(tool, prefix, testId = "tool") {
 			${meta ? `<span class="tool-meta">${escapeHtml(meta)}</span>` : ""}
 		</summary>
 		<div class="tool-body">
-			${argsText ? `<div class="tool-args"><span>引数</span><pre>${escapeHtml(argsText)}</pre></div>` : ""}
-			${clipped ? `<pre>${escapeHtml(clipped)}</pre>` : '<div class="note">出力なし</div>'}
+			${argsText ? `<div class="tool-args"><span>Arguments</span><pre>${escapeHtml(argsText)}</pre></div>` : ""}
+			${clipped ? `<pre>${escapeHtml(clipped)}</pre>` : `<div class="note">No output</div>`}
 		</div>
 	</details>`;
 }
@@ -3175,7 +3286,7 @@ function formatElapsed(ms) {
 	const hours = Math.floor(total / 3600);
 	const minutes = Math.floor((total % 3600) / 60);
 	const seconds = total % 60;
-	return `${hours}h${pad2(minutes)}m${pad2(seconds)}s`;
+	return `${pad2(hours)}h ${pad2(minutes)}m ${pad2(seconds)}s`;
 }
 
 function updateElapsed() {
@@ -3212,9 +3323,9 @@ function renderRunStatus() {
 		return;
 	}
 	const text = state.compacting
-		? "コンテキストを圧縮中"
+		? "Compacting context"
 		: state.retry
-			? `再試行 ${state.retry.attempt}/${state.retry.maxAttempts}`
+			? `Retry ${state.retry.attempt}/${state.retry.maxAttempts}`
 			: "";
 	const diff = state.diff;
 	dom.runStatus.innerHTML = `<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>${
@@ -3239,14 +3350,14 @@ function renderChrome() {
 	dom.projectName.title = state.cwd;
 	dom.sessionName.textContent = state.sessionName;
 	dom.sessionName.title = state.sessionName;
-	dom.modelLabel.textContent = state.model?.name ?? "モデル";
-	dom.modelButton.title = state.model ? `${state.model.provider}/${state.model.id}` : "モデル";
+	dom.modelLabel.textContent = state.model?.name ?? "Model";
+	dom.modelButton.title = state.model ? `${state.model.provider}/${state.model.id}` : "Model";
 	dom.thinkingLabel.textContent = state.thinkingLevel;
 	const effortEditable = (state.levels ?? []).length > 1;
 	dom.thinkingButton.disabled = !effortEditable;
 	dom.thinkingButton.title = effortEditable
-		? `推論強度: ${state.thinkingLevel}`
-		: `推論強度: ${state.thinkingLevel} (このモデルは変更できません)`;
+		? `Reasoning effort: ${state.thinkingLevel}`
+		: `Reasoning effort: ${state.thinkingLevel} (not available for this model)`;
 
 	const usage = state.contextUsage;
 	const known =
@@ -3282,17 +3393,17 @@ function renderChrome() {
 	const title = [];
 	if (known) {
 		title.push(
-			`コンテキスト ${Math.round(percent)}% (${(usage.tokens ?? 0).toLocaleString()} / ${(usage.contextWindow ?? 0).toLocaleString()})`,
+			`Context ${Math.round(percent)}% (${(usage.tokens ?? 0).toLocaleString()} / ${(usage.contextWindow ?? 0).toLocaleString()})`,
 		);
 	} else {
-		title.push("コンテキスト");
+		title.push("Context");
 	}
 	if (limit !== null) {
 		title.push(
-			`自動圧縮 ${Math.round(limit)}% (${Math.round(state.compaction.thresholdTokens ?? 0).toLocaleString()})`,
+			`Auto-compaction ${Math.round(limit)}% (${Math.round(state.compaction.thresholdTokens ?? 0).toLocaleString()})`,
 		);
 	} else if (state.compaction && !state.compaction.enabled) {
-		title.push("自動圧縮 無効");
+		title.push("Auto-compaction disabled");
 	}
 	dom.contextButton.title = title.join(" · ");
 
@@ -3300,7 +3411,7 @@ function renderChrome() {
 	renderSendMode();
 	const queued = state.queue.steering.length + state.queue.followUp.length;
 	dom.queueBadge.hidden = queued === 0;
-	dom.queueBadge.textContent = `${queued} 待機`;
+	dom.queueBadge.textContent = `${queued} queued`;
 
 	const statuses = Object.values(state.statuses).filter(Boolean);
 	dom.composerLeft.replaceChildren(
@@ -3318,8 +3429,8 @@ function renderChrome() {
 	document.title = state.extensionTitle
 		? state.extensionTitle
 		: state.sessionName
-			? `${state.sessionName} · Pi-dock`
-			: "Pi-dock";
+			? `${state.sessionName} · Pi TinyChat`
+			: "Pi TinyChat";
 }
 
 function renderWidgets() {
@@ -3332,11 +3443,11 @@ function renderBanner() {
 	if (state.authError) {
 		showBanner(state.authError, null);
 	} else if (state.piDown) {
-		showBanner(state.piDown, { label: "再起動", action: restartPi });
+		showBanner(state.piDown, { label: t("banner.restart"), action: restartPi });
 	} else if (!state.ready) {
-		showBanner("Pi に接続しています…", null);
+		showBanner(t("banner.connectingPi"), null);
 	} else if (!state.connected) {
-		showBanner("サーバーに再接続しています…", null);
+		showBanner(t("banner.reconnecting"), null);
 	} else {
 		dom.banner.hidden = true;
 	}
@@ -3461,6 +3572,7 @@ async function boot() {
 	applyTheme();
 	setPlanWidth(settings.planWidth);
 	initPlanResizer();
+	syncPlanPanelState();
 	renderChrome();
 	renderLive();
 	renderPlan();
@@ -3486,12 +3598,11 @@ async function boot() {
 		state.ready = false;
 		const unauthorized = /unauthorized/i.test(error.message);
 		if (unauthorized) {
-			state.authError =
-				"このページは起動用 URL から開く必要があります。ターミナルに表示された URL を開いてください。";
+			state.authError = t("banner.unauthorized");
 			showBanner(state.authError, null);
 		} else {
-			showBanner(`Pi に接続できません: ${error.message}`, {
-				label: "再試行",
+			showBanner(t("banner.connectFailed", { message: error.message }), {
+				label: t("banner.retry"),
 				action: () => bootRefresh(),
 			});
 		}
@@ -3504,7 +3615,7 @@ async function bootRefresh() {
 		await api({ type: "dock:restart" }).catch(() => {});
 		await refreshSnapshot();
 	} catch (error) {
-		showBanner(`Pi に接続できません: ${error.message}`, { label: "再試行", action: () => bootRefresh() });
+		showBanner(t("banner.connectFailed", { message: error.message }), { label: t("banner.retry"), action: () => bootRefresh() });
 	}
 }
 

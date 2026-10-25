@@ -1,7 +1,7 @@
-/** @typedef {import("./pi-protocol.js").PiRecord} PiRecord */
-/** @typedef {import("./pi-protocol.js").PiAssistantMessageEvent} PiAssistantMessageEvent */
-/** @typedef {import("./pi-protocol.js").PiTextBlock} PiTextBlock */
-/** @typedef {import("./pi-protocol.js").PiToolOutput} PiToolOutput */
+/** @typedef {import("./pi-types.js").PiRecord} PiRecord */
+/** @typedef {import("./pi-types.js").PiAssistantMessageEvent} PiAssistantMessageEvent */
+/** @typedef {import("./pi-types.js").PiTextBlock} PiTextBlock */
+/** @typedef {import("./pi-types.js").PiToolOutput} PiToolOutput */
 
 /**
  * In-memory view of the assistant message currently being streamed.
@@ -63,9 +63,9 @@ export class LiveState {
 		}
 	}
 
-	/** @param {PiAssistantMessageEvent | undefined} update */
+	/** @param {PiAssistantMessageEvent} update */
 	#applyUpdate(update) {
-		if (!update) return;
+		if (!update || !("contentIndex" in update)) return;
 		const index = update.contentIndex;
 		const block = this.#blocks[index];
 		switch (update.type) {

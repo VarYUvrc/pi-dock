@@ -1,0 +1,10 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"allowJs": false,
+		"checkJs": false,
+		"strict": false
+	},
+	"include": ["extension/**/*.ts"],
+	"exclude": ["node_modules", "tmp", "test-results", "playwright-report"]
+}

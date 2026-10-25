@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DockError } from "./errors.js";
 import { PiBridge } from "./pi.js";
 import { LiveState } from "./live.js";
 import { PLAN_STATE_ENTRY, PLAN_TOOL, normalizePlan, planFromEntries } from "./plan.js";
@@ -39,9 +40,11 @@ const ASSETS = {
 	"/": ["index.html", "text/html; charset=utf-8"],
 	"/index.html": ["index.html", "text/html; charset=utf-8"],
 	"/app.js": ["app.js", "text/javascript; charset=utf-8"],
+	"/i18n.js": ["i18n.js", "text/javascript; charset=utf-8"],
 	"/markdown.js": ["markdown.js", "text/javascript; charset=utf-8"],
 	"/theme-init.js": ["theme-init.js", "text/javascript; charset=utf-8"],
 	"/style.css": ["style.css", "text/css; charset=utf-8"],
+	"/favicon.svg": ["favicon.svg", "image/svg+xml"],
 };
 
 // Only commands the UI needs are reachable from the browser.
@@ -92,7 +95,8 @@ async function waitForPi(bridge, timeout = 30_000) {
 			await delay(250);
 		}
 	}
-	throw new Error(bridge.lastExit?.reason ?? "Pi の起動がタイムアウトしました");
+	if (bridge.lastExit) throw new Error(bridge.lastExit.reason);
+	throw new DockError("server.piTimeout");
 }
 
 function publicModel(model) {
@@ -108,7 +112,7 @@ function publicModel(model) {
 
 function validateImages(images) {
 	if (images === undefined) return undefined;
-	if (!Array.isArray(images) || images.length > 6) throw new Error("画像の形式が不正です");
+	if (!Array.isArray(images) || images.length > 6) throw new DockError("server.invalidImages");
 	return images.map((image) => {
 		if (
 			!image ||
@@ -117,7 +121,7 @@ function validateImages(images) {
 			typeof image.mimeType !== "string" ||
 			image.data.length > MAX_BODY
 		) {
-			throw new Error("画像の形式が不正です");
+			throw new DockError("server.invalidImages");
 		}
 		return { type: "image", data: image.data, mimeType: image.mimeType };
 	});
@@ -209,7 +213,7 @@ export async function createDock({
 		return runtime;
 	}
 
-	/** @param {import("./pi-protocol.js").PiRecord} record */
+	/** @param {import("./pi-types.js").PiRecord} record */
 	function onRuntimeRecord(runtime, record) {
 		runtime.live.apply(record);
 		if (record.type === "session_info_changed") {
@@ -366,7 +370,7 @@ export async function createDock({
 	}
 
 	function requireRuntime() {
-		if (!activeRuntime) throw new Error("Pi に接続されていません");
+		if (!activeRuntime) throw new DockError("server.notConnected");
 		if (activeRuntime.exit) throw new Error(activeRuntime.exit.reason);
 		return activeRuntime;
 	}
@@ -448,7 +452,7 @@ export async function createDock({
 			if (runtime.running && !runtime.runStartedAt) runtime.runStartedAt = Date.now();
 			if (!runtime.running) runtime.runStartedAt = null;
 		}
-		const compaction = await describeCompaction({ cwd, env, model: state?.model });
+		const compaction = await describeCompaction({ env, model: state?.model });
 		return {
 			runtime: runtime.id,
 			cwd,
@@ -471,26 +475,26 @@ export async function createDock({
 
 	async function currentModel() {
 		const state = await requireRuntime().bridge.request({ type: "get_state" });
-		if (!state?.model) throw new Error("モデルが選択されていません");
+		if (!state?.model) throw new DockError("server.noModel");
 		return state.model;
 	}
 
 	async function handleRpc(command) {
 		if (!command || typeof command !== "object" || typeof command.type !== "string") {
-			throw new Error("コマンドが不正です");
+			throw new DockError("server.invalidCommand");
 		}
 
 		if (command.type === "dock:snapshot") return snapshot();
 		if (command.type === "dock:sessions") return await dockSessions();
 		if (command.type === "dock:activate") {
 			const runtime = runtimes.get(String(command.runtimeId));
-			if (!runtime || runtime.exit) throw new Error("セッションが見つかりません");
+			if (!runtime || runtime.exit) throw new DockError("server.sessionNotFound");
 			activateRuntime(runtime);
 			return { runtime: runtime.id };
 		}
 		if (command.type === "dock:restart") {
 			const runtime = activeRuntime;
-			if (!runtime) throw new Error("Pi に接続されていません");
+			if (!runtime) throw new DockError("server.notConnected");
 			runtime.pendingUi.clear();
 			runtime.statuses = {};
 			runtime.widgets = {};
@@ -508,7 +512,7 @@ export async function createDock({
 				? command.ids.filter((id) => typeof id === "string" && id)
 				: null;
 			if (!all && (!ids || ids.length === 0)) {
-				throw new Error("削除対象が指定されていません");
+				throw new DockError("server.deleteTargetMissing");
 			}
 			const { targets, missing } = await resolveSessionTargets({
 				cwd,
@@ -525,9 +529,11 @@ export async function createDock({
 				if (runtime.sessionId) protectedIds.add(runtime.sessionId);
 			}
 
+			/** @type {{ id: string, error: string, errorKey?: string }[]} */
 			const failed = missing.map((id) => ({
 				id,
-				error: "セッションが見つかりません",
+				error: "server.sessionNotFound",
+				errorKey: "server.sessionNotFound",
 			}));
 			let deleted = 0;
 			for (const target of targets) {
@@ -535,7 +541,11 @@ export async function createDock({
 					protectedPaths.has(sessionKey(target.path)) ||
 					protectedIds.has(target.id)
 				) {
-					failed.push({ id: target.id, error: "使用中のセッションは削除できません" });
+					failed.push({
+						id: target.id,
+						error: "server.sessionInUse",
+						errorKey: "server.sessionInUse",
+					});
 					continue;
 				}
 				const runtime =
@@ -547,7 +557,7 @@ export async function createDock({
 					if (runtime.running) {
 						failed.push({
 							id: target.id,
-							error: "実行中のセッションは削除できません",
+							error: "server.sessionRunning",
 						});
 						continue;
 					}
@@ -571,7 +581,7 @@ export async function createDock({
 			return { cancelled: false, runtime: runtime.id };
 		}
 		if (command.type === "switch_session") {
-			if (typeof command.sessionPath !== "string") throw new Error("パスが不正です");
+			if (typeof command.sessionPath !== "string") throw new DockError("server.invalidPath");
 			const runtime = await runtimeForPath(command.sessionPath);
 			activateRuntime(runtime);
 			return { cancelled: false, runtime: runtime.id };
@@ -581,23 +591,22 @@ export async function createDock({
 			if (command.action === "enable") {
 				await setCompactionEnabled({ env, enabled: command.enabled !== false });
 			} else if (command.action === "clear") {
-				await clearCompactionThreshold({ cwd, env, model });
+				await clearCompactionThreshold({ env, model });
 			} else {
 				await setCompactionThreshold({
-					cwd,
 					env,
 					model,
 					percent: Number(command.percent),
 				});
 			}
-			return { compaction: await describeCompaction({ cwd, env, model }) };
+			return { compaction: await describeCompaction({ env, model }) };
 		}
 		if (command.type === "dock:extension_ui_response") {
-			if (typeof command.id !== "string") throw new Error("id が不正です");
+			if (typeof command.id !== "string") throw new DockError("server.invalidId");
 			const runtime = command.runtimeId
 				? runtimes.get(String(command.runtimeId))
 				: requireRuntime();
-			if (!runtime || runtime.exit) throw new Error("セッションが見つかりません");
+			if (!runtime || runtime.exit) throw new DockError("server.sessionNotFound");
 			const response = {
 				type: "extension_ui_response",
 				id: command.id,
@@ -611,12 +620,12 @@ export async function createDock({
 			runtime.bridge.sendRaw(response);
 			return { sent: true };
 		}
-		if (!FORWARDED.has(command.type)) throw new Error("未対応のコマンドです");
+		if (!FORWARDED.has(command.type)) throw new DockError("server.unsupportedCommand");
 
 		const payload = { type: command.type };
 		if (command.type === "prompt" || command.type === "steer" || command.type === "follow_up") {
 			if (typeof command.message !== "string" || !command.message.trim()) {
-				throw new Error("メッセージが空です");
+				throw new DockError("server.invalidMessage");
 			}
 			payload.message = command.message;
 			const images = validateImages(command.images);
@@ -625,17 +634,17 @@ export async function createDock({
 		}
 		if (command.type === "set_model") {
 			if (typeof command.provider !== "string" || typeof command.modelId !== "string") {
-				throw new Error("モデルが不正です");
+				throw new DockError("server.invalidModel");
 			}
 			payload.provider = command.provider;
 			payload.modelId = command.modelId;
 		}
 		if (command.type === "set_thinking_level") {
-			if (typeof command.level !== "string") throw new Error("level が不正です");
+			if (typeof command.level !== "string") throw new DockError("server.invalidLevel");
 			payload.level = command.level;
 		}
 		if (command.type === "set_session_name") {
-			if (typeof command.name !== "string") throw new Error("name が不正です");
+			if (typeof command.name !== "string") throw new DockError("server.invalidName");
 			payload.name = command.name;
 		}
 		if (command.type === "compact" && typeof command.customInstructions === "string") {
@@ -652,7 +661,7 @@ export async function createDock({
 		for (const part of header.split(";")) {
 			const separator = part.indexOf("=");
 			if (separator === -1) continue;
-			if (part.slice(0, separator).trim() !== "pi_dock") continue;
+			if (part.slice(0, separator).trim() !== "pi_tinychat") continue;
 			try {
 				return decodeURIComponent(part.slice(separator + 1).trim());
 			} catch {
@@ -663,7 +672,7 @@ export async function createDock({
 	}
 
 	function authorized(request, url) {
-		const header = request.headers["x-pi-dock-token"];
+		const header = request.headers["x-pi-tinychat-token"];
 		if (typeof header === "string" && header === token) return true;
 		if (cookieToken(request) === token) return true;
 		return (
@@ -697,7 +706,7 @@ export async function createDock({
 			request.on("data", (chunk) => {
 				size += chunk.length;
 				if (size > MAX_BODY) {
-					reject(new Error("リクエストが大きすぎます"));
+					reject(new DockError("server.requestTooLarge"));
 					request.destroy();
 					return;
 				}
@@ -724,14 +733,14 @@ export async function createDock({
 		) {
 			if (!authorized(request, url)) {
 				response.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
-				response.end("Unauthorized — open the URL printed by pi-dock");
+				response.end("Unauthorized — open the URL printed by pi-tinychat");
 				return;
 			}
 			// Exchange the launch credential for a localhost cookie and redirect to
 			// a clean address. The credential itself stays as strong as before.
 			response.writeHead(303, {
 				location: "/",
-				"set-cookie": `pi_dock=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`,
+				"set-cookie": `pi_tinychat=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`,
 				"cache-control": "no-store",
 				"referrer-policy": "no-referrer",
 			});
@@ -779,7 +788,13 @@ export async function createDock({
 			try {
 				json(response, 200, { ok: true, data: await handleRpc(command) });
 			} catch (error) {
-				json(response, 200, { ok: false, error: error.message });
+				json(response, 200, {
+					ok: false,
+					error: error.message,
+					...(error instanceof DockError
+						? { errorKey: error.key, errorParams: error.params }
+						: {}),
+				});
 			}
 			return;
 		}
@@ -801,7 +816,7 @@ export async function createDock({
 		const needsToken = asset.type.startsWith("text/html");
 		if (needsToken && !authorized(request, url)) {
 			response.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
-			response.end("Unauthorized — open the URL printed by pi-dock");
+			response.end("Unauthorized — open the URL printed by pi-tinychat");
 			return;
 		}
 		response.writeHead(200, {

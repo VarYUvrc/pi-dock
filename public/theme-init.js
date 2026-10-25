@@ -3,7 +3,8 @@
 (() => {
 	let choice = "system";
 	try {
-		const raw = localStorage.getItem("pi-dock:settings");
+		const raw =
+			localStorage.getItem("pi-tinychat:settings") ?? localStorage.getItem("pi-dock:settings");
 		if (raw) {
 			const parsed = JSON.parse(raw);
 			if (parsed && ["system", "light", "dark"].includes(parsed.theme)) choice = parsed.theme;

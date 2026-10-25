@@ -1,0 +1,19 @@
+name: Pi compatibility
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  latest-pi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest
+      - run: npm run test:pi

@@ -54,7 +54,7 @@ function fromLauncher(path) {
 
 /** Locate the installed Pi CLI without installing or copying it. */
 export function locatePi(env = process.env) {
-	const explicit = env.PI_DOCK_PI?.trim();
+	const explicit = env.PI_TINYCHAT_PI?.trim();
 	if (explicit) return fromLauncher(explicit);
 
 	const names =

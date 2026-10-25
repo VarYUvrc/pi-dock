@@ -62,7 +62,7 @@ function codeBlock(code, language) {
 	const lang = (language ?? "").replace(/[^\w+#.-]/g, "").slice(0, 20);
 	return `<div class="code-block"><div class="code-head">${
 		lang ? `<span class="code-lang">${escapeHtml(lang)}</span>` : "<span></span>"
-	}<button type="button" class="ghost-icon code-copy" aria-label="コードをコピー">${COPY_ICON}</button></div><pre><code>${escapeHtml(
+	}<button type="button" class="ghost-icon code-copy" aria-label="Copy code">${COPY_ICON}</button></div><pre><code>${escapeHtml(
 		code.replace(/\n$/, ""),
 	)}</code></pre></div>`;
 }
