@@ -1,134 +1,153 @@
-# Pi-dock
+# Pi Dock Web
 
-Pi Coding Agent をブラウザから使うための、薄いローカル Web UI。
+Pi Coding Agent をブラウザから使うためのローカル Web UI。Pi のセッション・認証・モデル・履歴をそのまま使い、会話と Plan の進捗を 1 画面で確認できます。
 
-- Pi の公式 RPC モードに接続するだけで、エージェントやセッションを再実装しない
-- セッションごとに Pi プロセスを分け、切り替えても実行中の会話はバックグラウンドで継続
-- モデル・推論強度・Skills・Extensions・履歴はすべて Pi の設定に追従
-- 日本語 IME の変換確定 Enter で誤送信しない
-- Dock 独自の DB・設定ファイル・ログを作らない（UI 設定は localStorage のみ）
+![Pi Dock Web](https://raw.githubusercontent.com/VarYUvrc/pi-dock/main/docs/images/pi-dock-web.png)
+
+## こんな人向け
+
+Pi をターミナルで使っている人へ。
+
+- 会話と Plan の進捗を、1 画面で見たい
+- 実行中のセッションを残したまま、別の会話を開きたい
+- Plan をチェックボックスで確認しながら作業したい
+- 日本語 IME の変換確定 Enter で誤送信したくない
+- Pi の設定・認証・履歴をそのまま使いたい
+
+Pi Dock Web は Pi の TUI を置き換えるものではありません。広い画面、複数セッション、Plan の見やすさを足すための薄い UI です。
+
+### できること
+
+- **Plan パネル** — チェックボックス・状態・進捗を表示。Pi 標準 TUI にはない Web UI 特有の機能で、エージェントの `dock_plan` 更新を即時反映します。トップバーの Plan ボタンで通常幅でも表示/非表示を切り替えられ、現在の状態がボタンの押下状態で分かります。
+- **セッション** — セッションごとに Pi プロセスを持ち、実行中でも別の会話へ切り替えられます。
+- **会話表示** — ストリーミング、思考/ツールの作業カード、Markdown、画像添付、拡張ダイアログ。
+- **モデル / コンテキスト** — モデル、推論強度、コンテキスト使用量、自動圧縮しきい値。しきい値は現在モデルのコンテキストに対する % で表示します。
+- **履歴** — 一覧・再開・名前・削除。
+- **UI** — English / 日本語、テーマ、IME 確定 Enter 対策。
+
+## 使い始める前に（Pi の準備）
+
+Node.js **22.19 以上**が必要です。Pi 本体もインストールしてください。
 
 ```bash
-npx pi-dock      # 公開前: ローカルの tarball / リポジトリから
-pi-dock --cwd C:\path\to\project
+npm install -g @earendil-works/pi-coding-agent
+pi --version
 ```
 
-起動すると `http://127.0.0.1:4310/?launch=...` が表示され、ブラウザが開きます。
-起動用の認証情報はローカル Cookie と交換され、ブラウザのアドレスバーは
-`http://127.0.0.1:4310/` に変わります。
+### 認証
 
-## 必要条件
+Dock から `/login` は実行できません。初回認証はターミナルで済ませてください。
 
-- Node.js 20 以上
-- Pi (`@earendil-works/pi-coding-agent`) がインストール済みで、`pi` が PATH にあること
-  - 見つからない場合は `--pi <path>` または `PI_DOCK_PI` で CLI の場所を指定できます
+```bash
+pi
+# 起動したら /login でプロバイダを選択
+```
 
-## 使い方
+または、Dock を起動するシェルで環境変数を設定します。例: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENCODE_API_KEY` / `DEEPSEEK_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_API_KEY`。ローカルモデルは `models.json` で設定します。
 
-| 操作 | キー |
-| --- | --- |
-| 送信 | `Ctrl + Enter`（設定で無効化可能） |
-| 送信（ボタン） | 右下の矢印 |
-| 改行 | `Enter` / `Shift + Enter` |
-| 中断 | `Esc` または停止ボタン |
-| コマンド検索 | `/` で開始 |
-| 新規会話 | 履歴の中の `+` |
-| 履歴 | ヘッダーの時計アイコン |
+### モデル
 
-- 新規会話や履歴の切り替えで、実行中のセッションは中断されません。
-  会話ごとに Pi プロセスが動き続け、履歴の実行中ドットで状態を確認できます。
-- コマンド検索には、Pi の Extensions / Skills / Prompt templates に加えて、
-  Dock が RPC に対応付けた組み込みコマンド（`/new` `/resume` `/compact`
-  `/model` `/thinking` `/settings` `/session` `/copy` `/export` `/name` `/reload`）が
-  表示されます。TUI 専用のコマンドは表示されません。
+ターミナルの `/model`、または Pi の `settings.json` にある `defaultProvider` / `defaultModel` で選択します。
 
-- 実行中に送信すると、Pi の steering キューに入ります。中断時は入力欄へ戻ります。
-- モデル・推論強度・コンテキスト使用量はヘッダーから確認・変更できます。
-  モデルと推論強度は同じピルの中に並び、どちらもプルダウンで選べます。
-- コンテキストメニューから、モデルごとの自動圧縮しきい値を 25% / 50% / 既定で
-  切り替えられます。設定は Pi 標準の `~/.pi/agent/settings.json` の
-  `compaction.modelOverrides` に書き込むだけで、Dock 独自の設定は持ちません。
-  プロジェクトの `.pi/settings.json` が同じ値を上書きしている場合は、
-  メニューに「プロジェクト設定が優先」と表示します。
-- 履歴は 50 件ずつ表示し、「さらに表示」で追加読み込みします。
-  全選択と一括削除は、表示中の件数ではなく削除可能な履歴全体を対象にします。
-- 思考・bash・read・write・edit などの連続した内部処理は「作業」カードにまとまり、
-  失敗や実行中の状態は折りたたんだままでも分かります。カードには実行した
-  ツール種別のアイコンが並びます。
-- 計画パネルは左端の境界をドラッグして幅を変更できます。計画は作成時に全体を登録し、
-  作業に合わせて更新されます。パネルの状態はエージェントの `dock_plan` 更新だけを反映し、
-  Dock がツール実行から進捗を推測して項目を進めることはありません。
-- 設定からテーマ（システム / ライト / ダーク）と Ctrl+Enter 送信を切り替えられます。
-- Extensions の確認・選択・入力ダイアログ、通知、ステータス、ウィジェットに対応します。
+### 動作確認
+
+```bash
+pi -p "Reply with exactly: ok"
+# または
+pi auth check --provider <provider>
+```
+
+### プロジェクトの `.pi` を使う場合
+
+そのプロジェクトで一度 `pi` を起動し、`/trust` を実行してください。RPC モードでは trust プロンプトが出ないため、未 trust のプロジェクト設定・拡張・skills は読み込まれません。Dock が自動 approve することはありません。
+
+`PI_CODING_AGENT_DIR` を変更している場合は、Dock を起動する環境でも同じ値を設定してください。認証情報は Pi の `~/.pi/agent` に保存され、Dock 独自の認証情報は作りません。
+
+## インストール / 起動
+
+**現在は npm 公開前です。** リポジトリを clone して起動してください。
+
+```bash
+git clone https://github.com/VarYUvrc/pi-dock.git
+cd pi-dock
+npm install
+npm start -- --cwd /path/to/project
+```
+
+ローカルに global install する場合:
+
+```bash
+npm install -g .
+pi-dock-web --cwd /path/to/project
+```
+
+npm 公開後は `npx pi-dock-web --cwd /path/to/project` で起動できる形に整えています。公開予定であり、現時点では `npx` では動きません。`npx pi-dock` は別プロジェクトのパッケージを指すため使用しないでください。
 
 ## オプション
 
 ```text
---cwd <path>     Pi の作業ディレクトリ（既定: カレントディレクトリ）
---port <port>    127.0.0.1 のポート（既定: 4310 / PI_DOCK_PORT）
---no-open        ブラウザを自動で開かない
---pi <path>      pi 実行ファイルまたは CLI エントリポイント
---continue       直近の Pi セッションを再開して起動
+--cwd <path>    Pi の作業ディレクトリ（既定: カレント）
+--port <port>   127.0.0.1 のポート（既定: $PI_DOCK_PORT または 4310）
+--no-open       ブラウザを自動で開かない
+--pi <path>     pi 実行ファイルまたは CLI エントリポイント
+--continue      そのディレクトリの直近セッションを再開
+--help          ヘルプ
+--version       バージョン
 ```
+
+## うまく動かないとき
+
+- **`pi` が見つからない** — `--pi /path/to/pi` または `PI_DOCK_PI` を指定します。
+- **モデルが `unknown`、送信に失敗する** — ターミナルで `/login` するか、Dock を起動するシェルに API キーを設定します。`pi auth check --provider <provider>` で確認できます。
+- **プロジェクトの `.pi` 設定が効かない** — そのプロジェクトで一度 `pi` を起動し `/trust` を実行します。
+- **履歴が空 / 別プロジェクトの履歴が出る** — `--cwd` が Pi で使ったディレクトリと一致しているか確認します。`PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` も Dock 側に必要です。
+- **ポートが使用中** — `--port 4311` など別のポートを指定します。
 
 ## 設計上の判断
 
-- **Pi を再実装しない**: `pi --mode rpc` のサブプロセスと JSONL で通信します。
-  Dock が持つのは表示・入力・接続だけです。
-- **セッションごとに 1 プロセス**: 新規会話・履歴の切り替えでは、既存プロセスを
-  中断せずに別の `pi --mode rpc` を起動します。同じセッションへ複数プロセスから
-  同時書き込みしないよう、開いているセッションはランタイムを再利用します。
-- **セッションは Pi の JSONL が唯一の保存先**: Dock は会話を保存しません。
-  履歴一覧は `~/.pi/agent/sessions/--<cwd>--/` を読み取り専用で参照します。
-- **書き込みを増やさない**: ストリーミングは RAM 上で処理し、Dock 由来の
-  ログ・DB・設定ファイルは作りません。`localStorage` への書き込みは設定変更時のみです。
-  テーマは `system` を既定とし、OS の切り替えに追従します。
-- **安全側のローカル UI**: `127.0.0.1` のみで待ち受け、Host / Origin / 起動トークンを検証。
-  起動トークンは初回アクセスで HttpOnly / SameSite=Strict の Cookie に交換され、
-  以降の URL に認証情報は残りません。API は許可した RPC コマンドだけを中継します。
-  Markdown は全文字をエスケープして描画します。
-- **依存ゼロ**: 実行時依存はありません（Markdown レンダラも同梱の小さな実装）。
-- **型を書くのは Pi との境界だけ**: `src/*.js` が受け取る RPC イベント・セッション entry・
-  レスポンスを `src/pi-protocol.d.ts` に写し、`npm run typecheck` で消費側（`src/`）と
-  生成側（`test/fixtures/fake-pi.js`）の両方を検査します。Pi 本体の型定義は取り込みません
-  （依存を含めて 100MB 超を開発環境に持ち込まないため）。ブラウザ側 `public/*.js` は
-  静的配信でビルド工程を持たないため TS 化しません。DOM 型のノイズ（`HTMLElement` の
-  キャスト追加など）が検出内容の大半を占め、ビルド工程と dist 管理のコストに見合わないためです。
-  UI の振る舞いは E2E で守ります。
+- Pi の RPC モードに接続し、エージェントやセッション機構を再実装しません。
+- セッションごとに Pi プロセスを 1 つ持ちます。実行中のセッションを止めずに別のセッションへ切り替えます。
+- モデル・推論強度・コマンド・履歴は Pi から取得/参照します。
+- **Plan だけは意図的な追加**です。`dock_plan` 拡張を読み込み、Plan を Pi のセッション JSONL に custom entry として保存します。Dock がツール実行から進捗を推測することはありません。エージェントが `set` / `update` / `clear` した内容だけを表示します。
+- Dock 独自の DB・ログ・設定ファイルは作りません。UI 設定は `localStorage` のみです。Pi の `settings.json` はユーザー操作時（自動圧縮しきい値・有効/無効）だけ更新します。
+- 127.0.0.1 限定で待ち受け、Host / Origin / 起動トークンを検証します。Markdown はエスケープ優先でレンダリングします。
+- runtime 依存はゼロです。Pi の公式型は devDependency として取り込み、`npm run typecheck` で境界と拡張を検査します。
+- 多言語の文言は `public/i18n.js` に集約し、`npm run check:i18n` でキー欠落を検査します。
+- ビルド工程はありません。ブラウザは素の ES Module を読みます。
+
+## 対応 Pi バージョン / 既知の制約
+
+- Pi **1.4.0** で動作確認しています。CI では 1.4.0 と週次の最新 Pi を検証します。厳密な semver 保証はせず、Pi の更新に追従が必要になる場合があります。
+- TUI 専用のカスタム UI（`custom()` など）は再現しません。RPC ダイアログのみ対応します。
+- `/login` `/tree` `/fork` `/clone` など TUI 専用コマンドは Dock から実行できません。
+- プロジェクトの `.pi` 設定は Pi の trust に従います。事前の `/trust` が必要です。
+- `sessionDir` 設定（`PI_CODING_AGENT_SESSION_DIR` 以外）は履歴一覧に反映されない場合があります。
+- Plan 設定を OFF にしても、起動済み Pi プロセスから `dock_plan` 拡張は外れません。OFF は Dock の Plan UI のみを無効化します。
+- バックグラウンドセッションは Pi プロセスを保持するため、同時数に比例してメモリ/CPU を使います。
+- 複数タブ間のセッション切替は即時同期しません。
+- fork / clone / ブランチツリー表示は未対応です。
 
 ## 開発
 
 ```bash
-npm install
-npm test          # Playwright E2E（実際の Pi の代わりに RPC フィクスチャを使用）
-npm run lint      # Biome で JS/TS/CSS/JSON を静的検査
-npm run format    # Biome で整形（任意）
-npm run typecheck # Pi 境界の型検査（src/ と E2E フィクスチャ）
-npm start -- --cwd <path>
+npm ci
+npm run lint
+npm run typecheck      # src + extension
+npm run check:i18n
+npm test               # Playwright E2E
+npm run test:pi        # 実 Pi（オフライン、認証不要）
+npm run pack:check     # tarball の内容と CLI 起動
+npm run check          # 上記をまとめて実行
 ```
 
-E2E は `test/fixtures/fake-pi.js` に対して、送信・IME・履歴・拡張ダイアログ・
-再起動・XSS・認証などを検証します。実 Pi との接続確認は次で行えます。
+実モデルを使う手動スモーク（課金・ネットワークあり。CI では実行しません）:
 
 ```bash
-npm run smoke -- --cwd <path> "Reply with exactly: pong"
+npm run smoke -- --cwd /path/to/project "Reply with exactly: pong"
 ```
 
+一時ファイルはリポジトリ内の `tmp/` を使います。CI は Ubuntu / Windows の Node 22.19 で実行し、週次で最新 Pi との互換性を確認します。公開用の release workflow はまだありません。
 
-## 既知の制約
+## ライセンス
 
-- TUI 専用のカスタム UI（`custom()` など）は再現しません。RPC で提供される
-  ダイアログ（select / confirm / input / editor）のみ対応します。
-- TUI 専用の組み込みコマンド（`/tree` `/fork` `/login` など）は実行できません。
-  RPC に対応付けられる一部だけを Dock の組み込みコマンドとして提供します。
-- バックグラウンドのセッションはそれぞれ Pi プロセスを保持するため、
-  同時に開くセッション数に比例してメモリと CPU を使います。
-- 会話の fork / clone、ブランチツリー表示は未対応です。
-- 複数タブで同時に開くと、セッション切り替えが他のタブへ即時反映されません。
-- ページ再読み込み後の待機キューと自動再試行の表示は復元されません。
-  実行状態・メッセージ・統計・拡張のステータス／ウィジェット／タイトルは復元されます。
-
-## 公開について
-
-`package.json` は `private: true` です。npm への公開は、パッケージ名・scope と
-Trusted Publishing の設定を確認したうえで別途行います。
+MIT

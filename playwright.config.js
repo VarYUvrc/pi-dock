@@ -9,6 +9,7 @@ export default defineConfig({
 	reporter: [["list"]],
 	use: {
 		viewport: { width: 1280, height: 900 },
+		locale: "ja-JP",
 		deviceScaleFactor: 1,
 		screenshot: "only-on-failure",
 		trace: "off",

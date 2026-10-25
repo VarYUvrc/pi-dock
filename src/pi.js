@@ -1,10 +1,9 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 
-/** @typedef {import("./pi-protocol.js").PiCommand} PiCommand */
-/** @typedef {import("./pi-protocol.js").PiCommandData} PiCommandData */
-/** @typedef {import("./pi-protocol.js").PiRecord} PiRecord */
-/** @typedef {import("./pi-protocol.js").PiResponse} PiResponse */
+/** @typedef {import("./pi-types.js").PiCommand} PiCommand */
+/** @typedef {import("./pi-types.js").PiRecord} PiRecord */
+/** @typedef {import("./pi-types.js").PiResponse} PiResponse */
 
 const MAX_STDERR = 8 * 1024;
 const DEFAULT_TIMEOUT = 60_000;
@@ -97,8 +96,11 @@ export class PiBridge extends EventEmitter {
 			if (!pending) return;
 			this.#pending.delete(record.id);
 			clearTimeout(pending.timer);
-			if (record.success) pending.resolve(record.data ?? null);
-			else pending.reject(new Error(record.error || "Pi command failed"));
+			if (record.success) {
+				pending.resolve("data" in record ? (record.data ?? null) : null);
+			} else {
+				pending.reject(new Error("error" in record ? record.error : "Pi command failed"));
+			}
 			return;
 		}
 		this.emit("record", record);
@@ -126,7 +128,7 @@ export class PiBridge extends EventEmitter {
 	 * @template {PiCommand} Command
 	 * @param {Command} command
 	 * @param {{ timeout?: number }} [options]
-	 * @returns {Promise<PiCommandData[Command["type"]]>}
+	 * @returns {Promise<import("./pi-types.js").PiCommandData<Command["type"]>>}
 	 */
 	request(command, { timeout = DEFAULT_TIMEOUT } = {}) {
 		const child = this.#process;

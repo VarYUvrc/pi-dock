@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 // A deliberately small, escape-first Markdown renderer.
 // Every character is HTML-escaped before formatting, so raw HTML in model
 // output can never become markup. Only http(s)/mailto/#/relative links survive.
@@ -62,7 +64,7 @@ function codeBlock(code, language) {
 	const lang = (language ?? "").replace(/[^\w+#.-]/g, "").slice(0, 20);
 	return `<div class="code-block"><div class="code-head">${
 		lang ? `<span class="code-lang">${escapeHtml(lang)}</span>` : "<span></span>"
-	}<button type="button" class="ghost-icon code-copy" aria-label="コードをコピー">${COPY_ICON}</button></div><pre><code>${escapeHtml(
+	}<button type="button" class="ghost-icon code-copy" aria-label="${escapeHtml(t("markdown.copyCode"))}">${COPY_ICON}</button></div><pre><code>${escapeHtml(
 		code.replace(/\n$/, ""),
 	)}</code></pre></div>`;
 }

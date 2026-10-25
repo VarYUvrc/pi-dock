@@ -1,7 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -52,7 +51,8 @@ export function sessionFile({ id, cwd, name, messages }) {
 }
 
 export async function setupWorkspace() {
-	const root = await mkdtemp(join(tmpdir(), "pi-dock-e2e-"));
+	await mkdir(join(ROOT, "tmp"), { recursive: true });
+	const root = await mkdtemp(join(ROOT, "tmp", "e2e-"));
 	const project = join(root, "project");
 	const agent = join(root, "agent");
 	const sessions = join(
@@ -96,7 +96,7 @@ export async function startDock(workspace, extraEnv = {}) {
 	const child = spawn(
 		process.execPath,
 		[
-			join(ROOT, "bin", "pi-dock.js"),
+			join(ROOT, "bin", "pi-dock-web.js"),
 			"--no-open",
 			"--port",
 			String(port),

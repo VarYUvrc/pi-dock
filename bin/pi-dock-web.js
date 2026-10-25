@@ -5,10 +5,10 @@ import { resolve } from "node:path";
 import { createDock } from "../src/server.js";
 import { locatePi } from "../src/pi-path.js";
 
-const HELP = `Pi-dock — local web UI for the Pi coding agent
+const HELP = `Pi Dock Web — local web UI for the Pi coding agent
 
 Usage:
-  pi-dock [options]
+  pi-dock-web [options]
 
 Options:
   --cwd <path>    Working directory for Pi (default: current directory)
@@ -91,7 +91,7 @@ async function main() {
 		port,
 		piArgs: options.continue ? ["--continue"] : [],
 	});
-	process.stdout.write(`\n  Pi-dock  ${dock.url}\n  ${cwd}\n\n`);
+	process.stdout.write(`\n  Pi Dock Web  ${dock.url}\n  ${cwd}\n\n`);
 	if (options.open !== false) openBrowser(dock.url);
 
 	let stopping = false;
@@ -106,6 +106,6 @@ async function main() {
 }
 
 main().catch((error) => {
-	process.stderr.write(`pi-dock: ${error.message}\n`);
+	process.stderr.write(`pi-dock-web: ${error.message}\n`);
 	process.exit(1);
 });

@@ -1,7 +1,7 @@
 export const PLAN_TOOL = "dock_plan";
 export const PLAN_STATE_ENTRY = "dock_plan_state";
 
-/** @typedef {import("./pi-protocol.js").PiSessionEntry} PiSessionEntry */
+/** @typedef {import("./pi-types.js").PiSessionEntry} PiSessionEntry */
 /** @typedef {"pending" | "in_progress" | "done" | "cancelled"} PlanItemStatus */
 /** @typedef {{ id: string, text: string, status: PlanItemStatus }} PlanItem */
 /** @typedef {{ title: string, items: PlanItem[] }} Plan */
@@ -68,23 +68,11 @@ export function planFromEntries(entries, leafId) {
 		seen.add(current);
 		current = entry.parentId ?? null;
 	}
-	for (const [index, entry] of branch.entries()) {
+	// Newest plan on the active branch. Only the agent replaces or clears a
+	// plan; a new user message leaves the previous plan visible.
+	for (const entry of branch) {
 		const plan = planFromEntry(entry);
-		if (!plan) continue;
-		// A completed plan belongs to the turn that completed it. Once a newer
-		// user message arrives, keep it in Pi's history but leave the right
-		// panel empty until the agent updates or replaces the plan.
-		const complete =
-			plan.items.length > 0 &&
-			plan.items.every((item) => item.status === "done" || item.status === "cancelled");
-		const newerUserMessage = branch
-			.slice(0, index)
-			.some(
-				(candidate) =>
-					candidate.type === "message" && candidate.message?.role === "user",
-			);
-		if (complete && newerUserMessage) return null;
-		return plan;
+		if (plan) return plan;
 	}
 	return null;
 }

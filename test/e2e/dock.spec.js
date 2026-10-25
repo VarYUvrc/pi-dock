@@ -62,7 +62,7 @@ async function rpc(command) {
 }
 
 test("loads the shell and enforces the token", async () => {
-	await expect(page.locator(".brand")).toContainText("Pi-dock");
+	await expect(page.locator(".brand")).toContainText("Pi Dock Web");
 	await expect(page.locator("#projectName")).toHaveText("project");
 	await expect(page.locator("#projectName .icon use")).toHaveAttribute("href", "#i-folder");
 	await expect(page.locator(".top-actions > #projectName + #modelGroup")).toHaveCount(1);
@@ -348,7 +348,7 @@ test("refreshes the context ring while a response is streaming", async () => {
 	expect(offset).toBeGreaterThan(0);
 });
 
-test("sets per-model compaction in Pi settings without losing other settings", async () => {
+test("stores the compaction threshold as a global percentage", async () => {
 	const settingsFile = join(workspace.agent, "settings.json");
 	await writeFile(
 		settingsFile,
@@ -356,7 +356,8 @@ test("sets per-model compaction in Pi settings without losing other settings", a
 			{ theme: "dark", compaction: { keepRecentTokens: 12_345 } },
 			null,
 			2,
-		)}\n`,
+		)}
+`,
 	);
 	await page.reload();
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
@@ -368,55 +369,35 @@ test("sets per-model compaction in Pi settings without losing other settings", a
 	await page.getByTestId("compaction-25").click();
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "true");
 	await expect(page.locator("#contextButton")).toHaveAttribute("title", /自動圧縮 25%/);
-	await expect(page.getByTestId("compaction-toggle")).toHaveCount(0);
 	const meter = page.getByTestId("compaction-meter");
 	await expect(meter).toBeVisible();
-	await expect(meter).toContainText("1.2k / 8k (15%)");
-	const fill = await meter
-		.locator(".compaction-meter-fill")
-		.evaluate((node) => node.getBoundingClientRect().width / node.parentElement.getBoundingClientRect().width);
-	expect(fill).toBeCloseTo(0.154, 2);
+	await expect(meter).toContainText("1.2k / 250k (0%)");
 
 	let saved = JSON.parse(await readFile(settingsFile, "utf8"));
 	expect(saved.theme).toBe("dark");
 	expect(saved.compaction.keepRecentTokens).toBe(12_345);
-	expect(saved.compaction.modelOverrides["fake/fake-fast"].reserveTokens).toBe(24_000);
+	expect(saved.compaction.reserveTokens).toBe(750_000);
+	expect(saved.compaction.modelOverrides).toBeUndefined();
+
+	await page.getByTestId("compaction-50").click();
+	await expect(page.getByTestId("compaction-50")).toHaveAttribute("aria-pressed", "true");
+	saved = JSON.parse(await readFile(settingsFile, "utf8"));
+	expect(saved.compaction.reserveTokens).toBe(500_000);
 
 	await page.getByTestId("compaction-default").click();
-	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
+	await expect(page.getByTestId("compaction-50")).toHaveAttribute("aria-pressed", "false");
 	saved = JSON.parse(await readFile(settingsFile, "utf8"));
-	expect(saved.compaction.modelOverrides).toBeUndefined();
+	expect(saved.compaction.reserveTokens).toBeUndefined();
 	expect(saved.compaction.keepRecentTokens).toBe(12_345);
 });
 
-test("shows when project compaction settings take precedence", async () => {
-	await mkdir(join(workspace.project, ".pi"), { recursive: true });
-	await writeFile(
-		join(workspace.project, ".pi", "settings.json"),
-		`${JSON.stringify(
-			{
-				compaction: {
-					modelOverrides: { "fake/fake-fast": { reserveTokens: 16_000 } },
-				},
-			},
-			null,
-			2,
-		)}\n`,
-	);
-	await page.reload();
-	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+test("shows the Pi default compaction before a threshold is chosen", async () => {
 	await page.locator("#contextButton").click();
-	await expect(page.getByTestId("compaction-project-note")).toBeVisible();
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
-
-	await page.getByTestId("compaction-25").click();
-	await expect(
-		page.getByTestId("toast").filter({ hasText: "プロジェクト設定が優先" }),
-	).toBeVisible();
-	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
-
-	const saved = JSON.parse(await readFile(join(workspace.agent, "settings.json"), "utf8"));
-	expect(saved.compaction.modelOverrides["fake/fake-fast"].reserveTokens).toBe(24_000);
+	await expect(page.getByTestId("compaction-default")).toBeVisible();
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /自動圧縮 98%/);
+	const saved = await readFile(join(workspace.agent, "settings.json"), "utf8").catch(() => "");
+	expect(saved).toBe("");
 });
 
 test("Enter inserts a newline and never sends", async () => {
@@ -486,7 +467,14 @@ test("Ctrl+Enter setting is honoured and persisted", async () => {
 	const writes = await page.evaluate(() => window.__storageWrites);
 	expect(writes).toBe(1);
 	const stored = await page.evaluate(() => localStorage.getItem("pi-dock:settings"));
-	expect(JSON.parse(stored)).toEqual({ ctrlEnterSend: false, theme: "system", planWidth: 284 });
+	expect(JSON.parse(stored)).toEqual({
+		ctrlEnterSend: false,
+		theme: "system",
+		planWidth: 284,
+		plan: true,
+		planPanelVisible: true,
+		language: null,
+	});
 
 	await page.reload();
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
@@ -540,10 +528,10 @@ test("plus menu searches commands and inserts without sending", async () => {
 	await expect(page.locator("#commandMenu")).toBeVisible();
 	await expect(page.getByTestId("command-item").filter({ hasText: "/fix-tests" })).toHaveCount(1);
 	await expect(page.getByTestId("command-item").filter({ hasText: "/new" })).toHaveCount(1);
-	await expect(page.locator("#commandMenu")).toContainText("Prompt");
-	await expect(page.locator("#commandMenu")).toContainText("Skill");
-	await expect(page.locator("#commandMenu")).toContainText("Extension");
-	await expect(page.locator("#commandMenu")).toContainText("Built-in");
+	await expect(page.locator("#commandMenu")).toContainText("プロンプト");
+	await expect(page.locator("#commandMenu")).toContainText("スキル");
+	await expect(page.locator("#commandMenu")).toContainText("拡張");
+	await expect(page.locator("#commandMenu")).toContainText("内蔵");
 
 	const search = page.locator('[data-role="command-search"]');
 	await search.fill("review");
@@ -739,16 +727,15 @@ test("keeps the plan on the right and only shows the current plan", async () => 
 	}
 	await expect(page.locator(".plan-item.done")).toHaveCount(5);
 
-	// A completed plan belongs to the turn that completed it. A new user
-	// message leaves the right panel empty until the agent updates the plan.
+	// A completed plan stays visible until the agent replaces or clears it.
 	await send("hello");
 	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
 		timeout: 10_000,
 	});
-	await expect(page.getByTestId("plan-item")).toHaveCount(0);
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
 	await expect(plan).toBeVisible();
 
-	// Continuing the same work brings the same plan back, with a new item.
+	// Continuing the same work keeps the plan and appends an item.
 	await send("plan continue");
 	await expect(page.getByTestId("plan-item")).toHaveCount(6);
 	await expect(page.getByTestId("plan-item").last()).toHaveAttribute("data-status", "pending");
@@ -810,6 +797,8 @@ test("opens the plan in a drawer on narrow screens", async () => {
 
 	await page.locator("#planToggle").click();
 	await expect(page.locator(".app")).toHaveClass(/plan-open/);
+	await expect(page.locator("#planToggle")).toHaveAttribute("aria-pressed", "true");
+	await expect(page.locator("#planToggle")).toHaveAttribute("aria-expanded", "true");
 	await expect(page.locator("#planBackdrop")).toBeVisible();
 	await expect
 		.poll(async () => (await page.locator("#planPanel").boundingBox()).x)
@@ -817,7 +806,97 @@ test("opens the plan in a drawer on narrow screens", async () => {
 
 	await page.locator("#planClose").click();
 	await expect(page.locator(".app")).not.toHaveClass(/plan-open/);
+	await expect(page.locator("#planToggle")).toHaveAttribute("aria-pressed", "false");
 	await expect(page.locator("#planBackdrop")).toBeHidden();
+
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await expect(page.locator("#planPanel")).toBeVisible();
+	await expect(page.locator("#planToggle")).toHaveAttribute("aria-pressed", "true");
+	await expect(page.locator("#planToggle")).toHaveAttribute("aria-expanded", "true");
+});
+
+test("shows the plan before the assistant finishes and keeps it afterwards", async () => {
+	await send("plan slow start");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await expect(page.locator("#stopButton")).toBeVisible();
+	await expectDone();
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await send("hello");
+	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
+		timeout: 10_000,
+	});
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+});
+
+test("toggles the plan panel from the topbar at normal width", async () => {
+	const toggle = page.locator("#planToggle");
+	const panel = page.locator("#planPanel");
+	const chat = page.locator(".chat");
+	await expect(toggle).toBeVisible();
+	await expect(toggle).toHaveAttribute("aria-pressed", "true");
+	const wide = (await chat.boundingBox()).width;
+
+	await toggle.click();
+	await expect(panel).toBeHidden();
+	await expect(toggle).toHaveAttribute("aria-pressed", "false");
+	await expect.poll(async () => (await chat.boundingBox()).width).toBeGreaterThan(wide);
+
+	// A plan update must not reopen a panel the user hid.
+	await send("plan start");
+	await expectDone();
+	await expect(panel).toBeHidden();
+
+	await page.reload();
+	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+	await expect(panel).toBeHidden();
+	await expect(toggle).toHaveAttribute("aria-pressed", "false");
+	await toggle.click();
+	await expect(panel).toBeVisible();
+	await expect(toggle).toHaveAttribute("aria-pressed", "true");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+});
+
+test("disables the plan UI from settings and restores the current plan", async () => {
+	await send("plan start");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	await expectDone();
+
+	await page.locator("#settingsButton").click();
+	const planToggle = page.getByTestId("plan-setting-toggle");
+	await expect(planToggle).toHaveAttribute("aria-checked", "true");
+	await planToggle.click();
+	await expect(planToggle).toHaveAttribute("aria-checked", "false");
+	await expect(page.locator("#planToggle")).toBeHidden();
+	await expect(page.locator("#planPanel")).toBeHidden();
+	await expect(page.getByTestId("plan-item")).toHaveCount(0);
+
+	await planToggle.click();
+	await expect(planToggle).toHaveAttribute("aria-checked", "true");
+	await expect(page.locator("#planPanel")).toBeVisible();
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+});
+
+test("switches to English without reloading and persists it", async () => {
+	const html = page.locator("html");
+	await expect(html).toHaveAttribute("lang", "ja");
+	await page.locator("#settingsButton").click();
+	await expect(page.locator("#settingsMenu")).toContainText("言語");
+	await page.getByTestId("language-en").click();
+	await expect(html).toHaveAttribute("lang", "en");
+	await expect(page.getByTestId("language-en")).toHaveAttribute("aria-pressed", "true");
+	await expect(page.locator("#settingsMenu")).toContainText("Theme");
+	await expect(page.locator("#settingsMenu")).toContainText("Language");
+	await expect(page.locator("#settingsButton")).toHaveAttribute("aria-label", "Settings");
+	await expect(page.locator("#planTitle")).toHaveText("Plan");
+
+	await page.reload();
+	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+	await expect(html).toHaveAttribute("lang", "en");
+	await page.locator("#settingsButton").click();
+	await expect(page.getByTestId("language-en")).toHaveAttribute("aria-pressed", "true");
+	await page.getByTestId("language-ja").click();
+	await expect(html).toHaveAttribute("lang", "ja");
+	await expect(page.locator("#settingsMenu")).toContainText("言語");
 });
 
 test("restores only the active branch plan after resuming", async () => {
@@ -1004,7 +1083,7 @@ test("rejects unknown paths and never deletes another project", async () => {
 	});
 	expect(traversal.ok).toBe(true);
 	expect(traversal.data.deleted).toBe(0);
-	expect(traversal.data.failed[0].error).toContain("見つかりません");
+	expect(traversal.data.failed[0].errorKey).toBe("server.sessionNotFound");
 
 	const removed = await rpc({ type: "dock:delete_sessions", all: true });
 	expect(removed.ok).toBe(true);
@@ -1028,7 +1107,7 @@ test("protects the active session from deletion", async () => {
 	});
 	expect(result.ok).toBe(true);
 	expect(result.data.deleted).toBe(0);
-	expect(result.data.failed[0].error).toContain("使用中");
+	expect(result.data.failed[0].errorKey).toBe("server.sessionInUse");
 	await expect(access(currentFile)).resolves.toBeUndefined();
 });
 

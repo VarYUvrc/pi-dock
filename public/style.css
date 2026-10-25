@@ -145,8 +145,17 @@ a:focus-visible {
 	min-height: 0;
 }
 
-.topbar .plan-toggle,
 .plan-panel .plan-close {
+	display: none;
+}
+
+.plan-toggle[aria-pressed="true"] {
+	background: var(--surface);
+	color: var(--text);
+}
+
+.app.plan-collapsed .plan-panel,
+.app.plan-collapsed .plan-resizer {
 	display: none;
 }
 

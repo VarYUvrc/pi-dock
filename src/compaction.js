@@ -1,202 +1,103 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { DockError } from "./errors.js";
 import { agentDir } from "./sessions.js";
 
 /**
- * Pi owns compaction configuration. Dock only reads the same settings file so
- * the context ring can show where automatic compaction will start, and writes
- * back to it when the user explicitly picks a threshold in the UI.
+ * Pi owns compaction configuration. Dock only reads and writes Pi's global
+ * settings so the UI can show the threshold as a percentage of the current
+ * model's context window. Project settings and per-model overrides are left
+ * entirely to Pi.
+ *
+ * Writes happen only on explicit user action, with an atomic rename. Do not
+ * edit the same settings file from Pi and Dock at the same moment.
  */
 const DEFAULT_RESERVE = 16_384;
-const DEFAULT_KEEP_RECENT = 20_000;
+const ASSUMED_CONTEXT_WINDOW = 1_000_000;
 
 export function settingsPath(env = process.env) {
 	return join(agentDir(env), "settings.json");
 }
 
-function projectSettingsPath(cwd) {
-	return cwd ? join(cwd, ".pi", "settings.json") : null;
-}
-
 async function readSettings(path, { strict = false } = {}) {
-	if (!path) return {};
 	try {
 		const text = (await readFile(path, "utf8")).replace(/^\uFEFF/, "");
 		if (!text.trim()) return {};
 		const value = JSON.parse(text);
 		if (!value || typeof value !== "object" || Array.isArray(value)) {
-			if (strict) throw new Error(`${path} の形式が不正です`);
+			if (strict) throw new DockError("server.invalidSettings");
 			return {};
 		}
 		return value;
 	} catch (error) {
+		if (error instanceof DockError) throw error;
 		if (error.code === "ENOENT") return {};
-		if (strict) {
-			throw new Error(`設定を読み込めません: ${error.message}`);
-		}
+		if (strict) throw new DockError("server.readSettings", { message: error.message });
 		return {};
 	}
-}
-
-function mergeCompaction(user, project) {
-	const base = user?.compaction && typeof user.compaction === "object" ? user.compaction : {};
-	const override =
-		project?.compaction && typeof project.compaction === "object" ? project.compaction : {};
-	const modelOverrides = { ...(base.modelOverrides ?? {}) };
-	for (const [key, value] of Object.entries(override.modelOverrides ?? {})) {
-		if (!value || typeof value !== "object") continue;
-		const current = modelOverrides[key];
-		modelOverrides[key] =
-			current && typeof current === "object" ? { ...current, ...value } : { ...value };
-	}
-	return {
-		...(base.enabled !== undefined || override.enabled !== undefined
-			? { enabled: override.enabled ?? base.enabled }
-			: {}),
-		...(base.reserveTokens !== undefined || override.reserveTokens !== undefined
-			? { reserveTokens: override.reserveTokens ?? base.reserveTokens }
-			: {}),
-		...(base.keepRecentTokens !== undefined || override.keepRecentTokens !== undefined
-			? { keepRecentTokens: override.keepRecentTokens ?? base.keepRecentTokens }
-			: {}),
-		...(Object.keys(modelOverrides).length ? { modelOverrides } : {}),
-	};
-}
-
-function modelKey(model) {
-	if (!model?.provider || !model?.id) return null;
-	return `${model.provider}/${model.id}`;
 }
 
 function safeInteger(value) {
 	return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-export async function describeCompaction({ cwd, env = process.env, model }) {
+export async function describeCompaction({ env = process.env, model }) {
 	const path = settingsPath(env);
-	const projectPath = projectSettingsPath(cwd);
-	const user = await readSettings(path);
-	const project = await readSettings(projectPath);
-	const compaction = mergeCompaction(user, project);
-	const key = modelKey(model);
-	const perModel =
-		key && compaction.modelOverrides?.[key] && typeof compaction.modelOverrides[key] === "object"
-			? compaction.modelOverrides[key]
-			: null;
-	const projectCompaction =
-		project?.compaction && typeof project.compaction === "object" ? project.compaction : null;
-	const projectModel =
-		key &&
-		projectCompaction?.modelOverrides?.[key] &&
-		typeof projectCompaction.modelOverrides[key] === "object"
-			? projectCompaction.modelOverrides[key]
-			: null;
-	const projectReserve = safeInteger(
-		projectModel?.reserveTokens ?? projectCompaction?.reserveTokens,
-	);
-	const reserveTokens =
-		safeInteger(perModel?.reserveTokens) ??
-		safeInteger(compaction.reserveTokens) ??
-		DEFAULT_RESERVE;
-	const keepRecentTokens =
-		safeInteger(perModel?.keepRecentTokens) ??
-		safeInteger(compaction.keepRecentTokens) ??
-		DEFAULT_KEEP_RECENT;
+	const settings = await readSettings(path);
+	const compaction =
+		settings.compaction && typeof settings.compaction === "object" ? settings.compaction : {};
 	const contextWindow = safeInteger(model?.contextWindow) ?? 0;
-	const thresholdTokens = contextWindow ? Math.max(0, contextWindow - reserveTokens) : null;
+	const displayContextWindow = contextWindow || ASSUMED_CONTEXT_WINDOW;
+	const configuredReserve = safeInteger(compaction.reserveTokens);
+	const reserveTokens = configuredReserve ?? DEFAULT_RESERVE;
+	const thresholdTokens = Math.max(0, displayContextWindow - reserveTokens);
 	return {
 		enabled: compaction.enabled !== false,
 		settingsPath: path,
-		projectSettingsPath: projectPath,
-		projectOverridesReserve: projectReserve !== null,
-		modelKey: key,
 		reserveTokens,
-		keepRecentTokens,
-		thresholdTokens,
-		thresholdPercent:
-			contextWindow && thresholdTokens !== null ? (thresholdTokens / contextWindow) * 100 : null,
+		reserveSource: configuredReserve === null ? "pi-default" : "settings",
 		contextWindow,
-		reserveSource:
-			perModel?.reserveTokens !== undefined
-				? projectModel?.reserveTokens !== undefined
-					? "project-model"
-					: "model"
-				: projectCompaction?.reserveTokens !== undefined
-					? "project"
-					: "default",
-		modelOverride: perModel ? { ...perModel } : null,
+		displayContextWindow,
+		contextWindowKnown: contextWindow > 0,
+		thresholdTokens,
+		thresholdPercent: (thresholdTokens / displayContextWindow) * 100,
 	};
 }
 
 function pruneEmpty(settings) {
 	const compaction = settings.compaction;
 	if (!compaction || typeof compaction !== "object") return;
-	if (compaction.modelOverrides && typeof compaction.modelOverrides === "object") {
-		for (const [key, value] of Object.entries(compaction.modelOverrides)) {
-			if (!value || typeof value !== "object" || Object.keys(value).length === 0) {
-				delete compaction.modelOverrides[key];
-			}
-		}
-		if (Object.keys(compaction.modelOverrides).length === 0) delete compaction.modelOverrides;
-	}
 	if (Object.keys(compaction).length === 0) delete settings.compaction;
 }
 
-/**
- * Explicit user action only: set this model's automatic-compaction threshold.
- * `percent` is the context usage at which compaction should start; the Pi
- * setting itself is the inverse reserve. Pass `null` to remove the override.
- */
-export async function setCompactionThreshold({ cwd, env = process.env, model, percent }) {
-	const key = modelKey(model);
-	if (!key) throw new Error("モデルが選択されていません");
+export async function setCompactionThreshold({ env = process.env, model, percent }) {
 	const contextWindow = safeInteger(model?.contextWindow) ?? 0;
-	if (!contextWindow) throw new Error("このモデルのコンテキスト長が不明です");
+	if (!contextWindow) throw new DockError("server.contextUnknown");
 	if (typeof percent !== "number" || !Number.isFinite(percent) || percent <= 0 || percent >= 100) {
-		throw new Error("圧縮しきい値は 1〜99% で指定してください");
+		throw new DockError("server.percentRange");
 	}
 
 	const path = settingsPath(env);
 	const settings = await readSettings(path, { strict: true });
 	const compaction =
 		settings.compaction && typeof settings.compaction === "object" ? settings.compaction : {};
-	const modelOverrides =
-		compaction.modelOverrides && typeof compaction.modelOverrides === "object"
-			? compaction.modelOverrides
-			: {};
-	const current =
-		modelOverrides[key] && typeof modelOverrides[key] === "object" ? modelOverrides[key] : {};
-	const reserveTokens = contextWindow - Math.round((contextWindow * percent) / 100);
-	const next = { ...current, reserveTokens };
-	modelOverrides[key] = next;
-	compaction.modelOverrides = modelOverrides;
+	compaction.reserveTokens = contextWindow - Math.round((contextWindow * percent) / 100);
 	settings.compaction = compaction;
 	await writeSettings(path, settings);
-	return describeCompaction({ cwd, env, model });
+	return describeCompaction({ env, model });
 }
 
-export async function clearCompactionThreshold({ cwd, env = process.env, model }) {
-	const key = modelKey(model);
-	if (!key) throw new Error("モデルが選択されていません");
+export async function clearCompactionThreshold({ env = process.env, model }) {
 	const path = settingsPath(env);
 	const settings = await readSettings(path, { strict: true });
 	const compaction =
 		settings.compaction && typeof settings.compaction === "object" ? settings.compaction : null;
-	if (!compaction) return describeCompaction({ cwd, env, model });
-	const modelOverrides =
-		compaction.modelOverrides && typeof compaction.modelOverrides === "object"
-			? compaction.modelOverrides
-			: null;
-	if (modelOverrides?.[key] && typeof modelOverrides[key] === "object") {
-		const entries = { ...modelOverrides[key] };
-		delete entries.reserveTokens;
-		if (Object.keys(entries).length) modelOverrides[key] = entries;
-		else delete modelOverrides[key];
-	}
+	if (!compaction) return describeCompaction({ env, model });
+	delete compaction.reserveTokens;
 	pruneEmpty(settings);
 	await writeSettings(path, settings);
-	return describeCompaction({ cwd, env, model });
+	return describeCompaction({ env, model });
 }
 
 export async function setCompactionEnabled({ env = process.env, enabled }) {

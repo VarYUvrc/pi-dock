@@ -1,9 +1,10 @@
 /**
  * Dock Plan - minimal implementation plan tool for Pi Dock.
  *
- * The plan lives in the tool result `details`, so Pi's session JSONL is the
- * only storage. Branching is handled by rebuilding state from the active
- * branch, exactly like the official todo example.
+ * The plan is stored in Pi's session JSONL twice: a custom entry is appended
+ * after every successful mutation so the Web UI can update immediately, and
+ * the tool result `details` keeps the plan readable by older sessions. When
+ * the branch changes, state is rebuilt from the active branch.
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -143,10 +144,13 @@ export default function (pi: ExtensionAPI) {
 				content: [{ type: "text" as const, text: `Error: ${message}` }],
 				details: { ...snapshot(), action, error: message } as PlanDetails,
 			});
-			const result = (action: string, text: string) => ({
-				content: [{ type: "text" as const, text }],
-				details: { ...snapshot(), action } as PlanDetails,
-			});
+			const result = (action: string, text: string) => {
+				if (action !== "list") pi.appendEntry(PLAN_STATE_ENTRY, clonePlan(plan));
+				return {
+					content: [{ type: "text" as const, text }],
+					details: { ...snapshot(), action } as PlanDetails,
+				};
+			};
 
 			switch (params.action) {
 				case "set": {

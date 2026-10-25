@@ -3,13 +3,13 @@
 // the user's Pi configuration; the dock tests drive this instead of a real model.
 import { readFile } from "node:fs/promises";
 
-/** @typedef {import("../../src/pi-protocol.js").PiRecord} PiRecord */
-/** @typedef {import("../../src/pi-protocol.js").PiResponse} PiResponse */
-/** @typedef {import("../../src/pi-protocol.js").PiAssistantMessage} PiAssistantMessage */
-/** @typedef {import("../../src/pi-protocol.js").PiUserMessage} PiUserMessage */
-/** @typedef {import("../../src/pi-protocol.js").PiContentBlock} PiContentBlock */
-/** @typedef {import("../../src/pi-protocol.js").PiToolOutput} PiToolOutput */
-/** @typedef {import("../../src/pi-protocol.js").PiToolResultMessage} PiToolResultMessage */
+/** @typedef {import("../../src/pi-types.js").PiRecord} PiRecord */
+/** @typedef {import("../../src/pi-types.js").PiResponse} PiResponse */
+/** @typedef {import("../../src/pi-types.js").PiAssistantMessage} PiAssistantMessage */
+/** @typedef {import("../../src/pi-types.js").PiUserMessage} PiUserMessage */
+/** @typedef {import("../../src/pi-types.js").PiContentBlock} PiContentBlock */
+/** @typedef {import("../../src/pi-types.js").PiToolOutput} PiToolOutput */
+/** @typedef {import("../../src/pi-types.js").PiToolResultMessage} PiToolResultMessage */
 
 const MODELS = [
 	{
@@ -18,7 +18,7 @@ const MODELS = [
 		provider: "fake",
 		api: "fake-api",
 		reasoning: false,
-		contextWindow: 32_000,
+		contextWindow: 1_000_000,
 	},
 	{
 		id: "fake-reason",
@@ -98,7 +98,10 @@ async function openSession(path) {
 		(entry) => entry.type !== "session" && typeof entry.id === "string",
 	);
 	session.leafId = session.entries.at(-1)?.id ?? null;
-	session.plan = null;
+	const planEntry = entries
+		.filter((entry) => entry.type === "custom" && entry.customType === "dock_plan_state")
+		.at(-1);
+	session.plan = planEntry?.data ?? null;
 	session.messages = entries
 		.filter((entry) => entry.type === "message")
 		.map((entry) => entry.message);
@@ -144,18 +147,16 @@ function write(record) {
  * @param {string} [error]
  */
 function respond(id, command, data, error) {
-	write({
-		id,
-		type: "response",
-		command,
-		success: error === undefined,
-		...(error === undefined ? { data } : { error }),
-	});
+	if (error === undefined) {
+		write(/** @type {PiResponse} */ ({ id, type: "response", command, success: true, data }));
+	} else {
+		write(/** @type {PiResponse} */ ({ id, type: "response", command, success: false, error }));
+	}
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** @returns {import("../../src/pi-protocol.js").PiUsage} */
+/** @returns {import("../../src/pi-types.js").PiUsage} */
 function usage() {
 	return {
 		input: 10,
@@ -168,8 +169,8 @@ function usage() {
 }
 
 /**
- * @param {PiContentBlock[]} content
- * @param {string} [stopReason]
+ * @param {PiAssistantMessage["content"]} content
+ * @param {PiAssistantMessage["stopReason"]} [stopReason]
  * @returns {PiAssistantMessage}
  */
 function assistant(content, stopReason = "stop") {
@@ -187,7 +188,7 @@ function assistant(content, stopReason = "stop") {
 
 /**
  * @param {string} content
- * @param {import("../../src/pi-protocol.js").PiImageBlock[]} [images]
+ * @param {import("../../src/pi-types.js").PiImageBlock[]} [images]
  * @returns {PiUserMessage}
  */
 function user(content, images = []) {
@@ -198,17 +199,31 @@ function user(content, images = []) {
 	};
 }
 
-function pushMessage(message) {
+function pushEntry(entry) {
 	const id = `e${Date.now().toString(36)}${(session.nextEntry++).toString(36)}`;
-	session.entries.push({
-		type: "message",
+	const stored = {
+		...entry,
 		id,
 		parentId: session.leafId,
 		timestamp: new Date().toISOString(),
-		message,
-	});
+	};
+	session.entries.push(stored);
 	session.leafId = id;
+	return stored;
+}
+
+function pushMessage(message) {
+	pushEntry({ type: "message", message });
 	session.messages.push(message);
+}
+
+function pushPlanEntry(plan) {
+	const entry = pushEntry({
+		type: "custom",
+		customType: "dock_plan_state",
+		data: { ...plan, items: plan.items.map((item) => ({ ...item })) },
+	});
+	write({ type: "entry_appended", entry });
 }
 
 function formatPlan(plan) {
@@ -252,6 +267,7 @@ function applyPlan(args) {
 		title = undefined;
 	}
 	session.plan = { ...(title ? { title } : {}), items, nextId };
+	pushPlanEntry(session.plan);
 	return {
 		content: [{ type: "text", text: formatPlan(session.plan) }],
 		details: { ...session.plan, action: args.action },
@@ -263,38 +279,42 @@ async function streamAssistant(parts, { slow = false } = {}) {
 	const calls = [];
 	const started = Date.now();
 	write({ type: "message_start", message: assistant([], "pending") });
-	/** @type {PiContentBlock[]} */
+	/** @type {PiAssistantMessage["content"]} */
 	const content = [];
 	for (const [index, part] of parts.entries()) {
 		if (part.type === "thinking") {
-			write({ type: "message_update", assistantMessageEvent: { type: "thinking_start", contentIndex: index } });
+			write({ type: "message_update", usage: usage(), assistantMessageEvent: { type: "thinking_start", contentIndex: index } });
 			for (const delta of chunk(part.text)) {
 				if (session.aborted) break;
 				session.contextTokens += 3;
 				write({
 					type: "message_update",
+				usage: usage(),
 					assistantMessageEvent: { type: "thinking_delta", contentIndex: index, delta },
 				});
 				await sleep(delay);
 			}
 			write({
 				type: "message_update",
+				usage: usage(),
 				assistantMessageEvent: { type: "thinking_end", contentIndex: index, content: part.text },
 			});
 			content[index] = { type: "thinking", thinking: part.text };
 		} else if (part.type === "text") {
-			write({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: index } });
+			write({ type: "message_update", usage: usage(), assistantMessageEvent: { type: "text_start", contentIndex: index } });
 			for (const delta of chunk(part.text)) {
 				if (session.aborted) break;
 				session.contextTokens += 5;
 				write({
 					type: "message_update",
+				usage: usage(),
 					assistantMessageEvent: { type: "text_delta", contentIndex: index, delta },
 				});
 				await sleep(delay);
 			}
 			write({
 				type: "message_update",
+				usage: usage(),
 				assistantMessageEvent: { type: "text_end", contentIndex: index, content: part.text },
 			});
 			content[index] = { type: "text", text: part.text };
@@ -304,6 +324,7 @@ async function streamAssistant(parts, { slow = false } = {}) {
 			calls.push(session.lastToolCall);
 			write({
 				type: "message_update",
+				usage: usage(),
 				assistantMessageEvent: { type: "toolcall_start", contentIndex: index, id, toolName: part.name },
 			});
 			const json = JSON.stringify(part.args);
@@ -311,12 +332,14 @@ async function streamAssistant(parts, { slow = false } = {}) {
 				if (session.aborted) break;
 				write({
 					type: "message_update",
+				usage: usage(),
 					assistantMessageEvent: { type: "toolcall_delta", contentIndex: index, delta },
 				});
 				await sleep(4);
 			}
 			write({
 				type: "message_update",
+				usage: usage(),
 				assistantMessageEvent: {
 					type: "toolcall_end",
 					contentIndex: index,
@@ -349,7 +372,7 @@ async function runTool(call = session.lastToolCall, { isError = false } = {}) {
 		toolCallId: call.id,
 		toolName: call.name,
 		args: call.arguments,
-		partialResult: { content: [{ type: "text", text: "partial" }] },
+		partialResult: { content: [{ type: "text", text: "partial" }], details: {} },
 	});
 	await sleep(20);
 	const outcome = /** @type {PiToolOutput} */ (
@@ -416,6 +439,18 @@ async function planPrompt(message) {
 		args = { action: "set", title: current?.title ?? "実装計画", items };
 	} else if (message.includes("continue")) {
 		args = { action: "add", text: "追加の確認", status: "pending" };
+	} else if (message.includes("english")) {
+		args = {
+			action: "set",
+			title: "Implementation plan",
+			items: [
+				{ text: "Inspect the RPC protocol", status: "done" },
+				{ text: "Build the Plan panel", status: "done" },
+				{ text: "Integrate with existing features", status: "in_progress" },
+				{ text: "Add E2E coverage", status: "pending" },
+				{ text: "Final verification", status: "pending" },
+			],
+		};
 	} else {
 		args = {
 			action: "set",
@@ -431,6 +466,7 @@ async function planPrompt(message) {
 	}
 	await streamAssistant([{ type: "toolCall", name: "dock_plan", args }]);
 	await runTool();
+	await sleep(message.includes("slow") ? 900 : 150);
 	await streamAssistant([{ type: "text", text: `plan action: ${args.action}` }]);
 }
 

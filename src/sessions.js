@@ -2,9 +2,9 @@ import { lstat, open, readdir, realpath, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, extname, join } from "node:path";
 
-/** @typedef {import("./pi-protocol.js").PiContent} PiContent */
-/** @typedef {import("./pi-protocol.js").PiSessionLine} PiSessionLine */
-/** @typedef {import("./pi-protocol.js").PiTextBlock} PiTextBlock */
+/** @typedef {import("./pi-types.js").PiContent} PiContent */
+/** @typedef {import("./pi-types.js").PiSessionLine} PiSessionLine */
+/** @typedef {import("./pi-types.js").PiTextBlock} PiTextBlock */
 /** @typedef {{ id: string, cwd: string, created: string, name: string, preview: string }} SessionInfo */
 
 const HEAD_BYTES = 32 * 1024;
@@ -17,6 +17,7 @@ export function agentDir(env = process.env) {
 
 /** Same directory naming Pi uses for sessions: --C--path-to-project-- */
 export function sessionDirFor(cwd, env = process.env) {
+	if (env.PI_CODING_AGENT_SESSION_DIR) return env.PI_CODING_AGENT_SESSION_DIR;
 	const safe = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 	return join(agentDir(env), "sessions", safe);
 }
