@@ -91,8 +91,8 @@ export async function setupWorkspace() {
 	return { root, project, agent, sessions, older, newer };
 }
 
-export async function startTinyChat(workspace, extraEnv = {}) {
-	const port = await freePort();
+export async function startTinyChat(workspace, extraEnv = {}, options = {}) {
+	const port = options.port ?? (await freePort());
 	const child = spawn(
 		process.execPath,
 		[
@@ -145,7 +145,7 @@ export async function startTinyChat(workspace, extraEnv = {}) {
 	return {
 		child,
 		url,
-		port,
+		port: Number(new URL(url).port),
 		token: new URL(url).searchParams.get("launch"),
 		stderr: () => stderr,
 	};

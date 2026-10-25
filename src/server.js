@@ -28,6 +28,7 @@ const PLAN_EXTENSION = join(
 );
 const MAX_BODY = 12 * 1024 * 1024;
 const HEARTBEAT_MS = 25_000;
+const PORT_FALLBACK_ATTEMPTS = 20;
 
 const RPC_TIMEOUTS = {
 	abort: 90_000,
@@ -135,6 +136,7 @@ export async function createTinyChat({
 	port = 0,
 	host = "127.0.0.1",
 	piArgs = [],
+	portAttempts = PORT_FALLBACK_ATTEMPTS,
 }) {
 	const clients = new Set();
 	const runtimes = new Map();
@@ -839,13 +841,37 @@ export async function createTinyChat({
 	}, HEARTBEAT_MS);
 	heartbeat.unref();
 
-	await new Promise((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(port, host, () => {
-			server.removeListener("error", reject);
-			resolve();
-		});
-	});
+	const lastPort = port === 0 ? 0 : Math.min(65535, port + portAttempts - 1);
+	let bound = false;
+	let listenError = null;
+	for (let candidate = port; candidate <= lastPort; candidate += 1) {
+		try {
+			await new Promise((resolve, reject) => {
+				const onError = (error) => reject(error);
+				server.once("error", onError);
+				server.listen(candidate, host, () => {
+					server.removeListener("error", onError);
+					resolve();
+				});
+			});
+			bound = true;
+			break;
+		} catch (error) {
+			listenError = error;
+			if (error.code !== "EADDRINUSE") {
+				clearInterval(heartbeat);
+				throw error;
+			}
+		}
+	}
+	if (!bound) {
+		clearInterval(heartbeat);
+		throw new Error(
+			port === 0
+				? `サーバーを起動できませんでした: ${listenError?.message ?? "unknown error"}`
+				: `ポート ${port}〜${lastPort} はすべて使用中です。--port で別のポートを指定してください。`,
+		);
+	}
 	const address = server.address();
 	actualPort = typeof address === "object" && address ? address.port : port;
 

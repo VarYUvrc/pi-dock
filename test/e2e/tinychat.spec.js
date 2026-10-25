@@ -335,9 +335,6 @@ test("refreshes the context ring while a response is streaming", async () => {
 	await send("long please");
 	await expect(page.getByTestId("message-live")).toContainText("chunk 2");
 	await expect(button).toHaveClass(/running/);
-	await button.click();
-	await expect(page.getByTestId("compact-button")).toHaveCount(0);
-	await button.click();
 	await expect.poll(ringOffset, { timeout: 10_000 }).not.toBe(before);
 	await expectDone();
 	await expect(button).not.toHaveClass(/running/);
@@ -1321,6 +1318,13 @@ test("runs Pi TinyChat built-in slash commands", async () => {
 	await input().press("Control+Enter");
 	await expect(page.getByTestId("toast").filter({ hasText: "圧縮しました" })).toBeVisible();
 	await expect(page.getByTestId("message-user")).toHaveCount(0);
+	// Directly after compaction Pi may have no valid context estimate yet.
+	// Show an empty ring without inventing a value or adding a "unknown" label.
+	await expect(page.locator("#contextButton")).toHaveClass(/unknown/);
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /Context/);
+	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /unknown/);
+	await expect(page.locator("#ringFg")).toBeVisible();
+	await expect.poll(ringOffset).toBeCloseTo(47.12, 1);
 
 	await input().fill("/name 調査メモ");
 	await input().press("Control+Enter");
@@ -1348,25 +1352,16 @@ test("stopping restores queued steering text", async () => {
 	await expect(page.locator("#queueBadge")).toBeHidden();
 });
 
-test("compacts the context from the menu", async () => {
-	await page.locator("#contextButton").click();
-	await expect(page.getByTestId("compact-button")).toBeVisible();
-	await page.getByTestId("compact-button").click();
-	await expect(page.getByTestId("toast").filter({ hasText: "圧縮しました" })).toBeVisible();
-	await expect(page.locator("#contextMenu")).toBeHidden();
-	// Directly after compaction Pi may have no valid context estimate yet.
-	// Show an empty ring without inventing a value or adding a "unknown" label.
-	await expect(page.locator("#contextButton")).toHaveClass(/unknown/);
-	await expect(page.locator("#contextButton")).toHaveAttribute("title", /Context/);
-	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /unknown/);
-	await expect(page.locator("#ringFg")).toBeVisible();
-	await expect.poll(ringOffset).toBeCloseTo(47.12, 1);
-
-	await send("hello");
-	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
-		timeout: 10_000,
-	});
-	await expect(page.locator("#contextButton")).not.toHaveClass(/unknown/);
+test("starts on the next free port when the requested port is busy", async () => {
+	const second = await startTinyChat(workspace, {}, { port: app.port });
+	try {
+		expect(second.port).toBeGreaterThan(app.port);
+		expect(second.port).toBeLessThanOrEqual(app.port + 20);
+		const response = await page.request.get(second.url, { maxRedirects: 0 });
+		expect(response.status()).toBe(303);
+	} finally {
+		await stopTinyChat(second);
+	}
 });
 
 test("restarts Pi after it exits", async () => {

@@ -2211,15 +2211,7 @@ function renderContextMenu() {
 			</div>
 		</div>
 		${unknown}
-		${compactionMeterMarkup(usedTokens, thresholdTokens)}` +
-		(state.running || state.compacting || state.compactingRequest
-			? ""
-			: `<div class="setting-row compaction-row">
-				<span>Manual compaction</span>
-				<div class="compaction-actions">
-					<button type="button" data-action="compact" data-testid="compact-button" title="Compact the context">Run</button>
-				</div>
-			</div>`);
+		${compactionMeterMarkup(usedTokens, thresholdTokens)}`;
 }
 
 function formatTokenCount(value) {
@@ -2336,13 +2328,6 @@ dom.contextMenu.addEventListener("click", async (event) => {
 			toast(error.message, "error");
 		}
 		return;
-	}
-	if (!event.target.closest('[data-action="compact"]')) return;
-	closeMenus();
-	try {
-		await compactContext();
-	} catch (error) {
-		toast(error.message, "error");
 	}
 });
 

@@ -22,7 +22,7 @@ It is for people who like Pi in a terminal but want a calmer screen for long tas
 ## What you get
 
 - **A plan you can glance at.** The agent publishes a checklist, and the right panel shows done, current, and pending items while it works.
-- **Context control you can actually feel.** Set auto-compaction at 25%, 50%, or 75% of the model window, or leave Pi's default. See the context ring and the exact reserve before the next long turn. Long-context models often get less precise well before the window is full, so 25–50% is a practical range. Open the ring to switch presets or compact manually.
+- **Context control you can actually feel.** Set auto-compaction at 25%, 50%, or 75% of the model window, or leave Pi's default. See the context ring and the exact reserve before the next long turn. Long-context models often get less precise well before the window is full, so 25–50% is a practical range. Open the ring to switch presets, or run `/compact` from the + menu to compact manually.
 - **Sessions that keep running.** Open another conversation without stopping the one in flight. Each session has its own Pi process.
 - **A conversation made for reading.** Streaming Markdown, compact thinking and tool cards, image attachments, and extension dialogs.
 - **Your Pi setup.** Login, models, reasoning effort, context usage, auto-compaction, and session history come from Pi itself.
@@ -45,7 +45,7 @@ npm install -g pi-tinychat
 pi-tinychat
 ```
 
-The browser opens at `http://127.0.0.1:4310`. Use `--port` if that port is taken, and `--no-open` when you do not want the browser to open automatically.
+The browser opens at `http://127.0.0.1:4310`. If that port is taken, Pi TinyChat automatically uses the next free port. Use `--port` to start from another port, and `--no-open` when you do not want the browser to open automatically.
 
 Authenticate once in a terminal; Pi TinyChat reuses that login:
 
@@ -68,7 +68,7 @@ The right panel mirrors that plan immediately and stores it in the Pi session, s
 
 ```text
 --cwd <path>    Working directory for Pi (default: current directory)
---port <port>   Port on 127.0.0.1 (default: $PI_TINYCHAT_PORT or 4310)
+--port <port>   Start at this port on 127.0.0.1 (default: $PI_TINYCHAT_PORT or 4310; falls back to the next free port)
 --no-open       Do not open the browser automatically
 --pi <path>     Path to the pi executable or CLI entry point
 --continue      Resume the most recent Pi session in the directory
@@ -109,7 +109,7 @@ Pi TinyChat is local-first by design:
 - **The model is `unknown` or sending fails** — run `/login` in a terminal, or set a provider API key in the shell that launches Pi TinyChat. Check with `pi auth check --provider <provider>`.
 - **Project `.pi` settings have no effect** — run `pi` once in that project and execute `/trust`. RPC mode follows Pi's trust rules.
 - **History is empty or shows another project** — make sure `--cwd` matches the directory you use with Pi. Set `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR` in the same environment if you customize them.
-- **The port is in use** — pass another port, for example `--port 4311`.
+- **The port is in use** — Pi TinyChat automatically tries the next 20 ports. Pass `--port` to choose the starting port.
 
 ## Compatibility
 

@@ -12,7 +12,7 @@ Usage:
 
 Options:
   --cwd <path>    Working directory for Pi (default: current directory)
-  --port <port>   Port on 127.0.0.1 (default: $PI_TINYCHAT_PORT or 4310)
+  --port <port>   Port on 127.0.0.1 (default: $PI_TINYCHAT_PORT or 4310; uses the next free port if taken)
   --no-open       Do not open the browser automatically
   --pi <path>     Path to the pi executable or CLI entry point
   --continue      Resume the most recent Pi session in the directory
