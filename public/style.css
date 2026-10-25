@@ -35,6 +35,11 @@
 	--glass-field: color-mix(in srgb, var(--bg) 34%, transparent);
 	--glass-hover: color-mix(in srgb, var(--surface) 40%, transparent);
 	--glass-blur: blur(26px) saturate(1.25);
+	/* A dialog covers the chat, so it uses a flat, denser glass: the radial one
+	   fades to 5% at the edges, which makes its title and body unreadable. */
+	--glass-solid: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+	--scrim: rgba(20, 14, 8, 0.22);
+	--scrim-blur: blur(1.5px);
 }
 
 :root[data-theme="dark"] {
@@ -2168,15 +2173,23 @@ body.resizing-plan * {
 
 /* ----------------------------------------------------------------- drawer */
 
-.drawer-backdrop {
+/* One scrim for every surface that covers the whole app, so the history drawer
+   and the dialog layer dim and blur the app the same way. */
+.drawer-backdrop,
+.dialog-layer {
 	position: fixed;
 	inset: 0;
-	z-index: 45;
-	background: rgba(20, 14, 8, 0.22);
-	backdrop-filter: blur(1.5px);
+	background: var(--scrim);
+	-webkit-backdrop-filter: var(--scrim-blur);
+	backdrop-filter: var(--scrim-blur);
 }
 
-.drawer-backdrop[hidden] {
+.drawer-backdrop {
+	z-index: 45;
+}
+
+.drawer-backdrop[hidden],
+.dialog-layer[hidden] {
 	display: none;
 }
 
@@ -2441,18 +2454,10 @@ body.resizing-plan * {
 /* ----------------------------------------------------------------- dialog */
 
 .dialog-layer {
-	position: fixed;
-	inset: 0;
 	z-index: 60;
 	display: grid;
 	place-items: center;
 	padding: 20px;
-	background: rgba(20, 14, 8, 0.3);
-	backdrop-filter: blur(2px);
-}
-
-.dialog-layer[hidden] {
-	display: none;
 }
 
 .dialog {
@@ -2463,7 +2468,6 @@ body.resizing-plan * {
 	padding: 18px;
 	border: 1px solid var(--line);
 	border-radius: 16px;
-	background: var(--bg-elevated);
 	box-shadow: var(--shadow);
 }
 
@@ -2475,10 +2479,14 @@ body.resizing-plan * {
 	backdrop-filter: var(--glass-blur);
 }
 
+.dialog {
+	background: var(--glass-solid);
+}
+
 /* Chromium's backdrop-filter does not sample the composited chat scroller, so
-   full-surface overlays blur the chat at the source. Popovers keep only their
-   own localized backdrop blur instead of blurring the whole background. */
-.app:has(.drawer:not([hidden]), .dialog-layer:not([hidden])) .scroller {
+   the dialog blurs the chat at the source. Side panels and popovers keep only
+   their own localized backdrop blur instead of frosting the conversation. */
+.app:has(.dialog-layer:not([hidden])) .scroller {
 	filter: blur(12px);
 }
 
@@ -2656,6 +2664,16 @@ body.resizing-plan * {
 }
 
 /* --------------------------------------------------------------- responsive */
+
+/* On wide screens the history panel is a side panel, like the plan panel, so its
+   scrim only catches clicks and must not dim or frost the chat behind it. */
+@media (min-width: 1041px) {
+	.drawer-backdrop {
+		background: none;
+		-webkit-backdrop-filter: none;
+		backdrop-filter: none;
+	}
+}
 
 @media (max-width: 1040px) {
 	.topbar .plan-toggle {

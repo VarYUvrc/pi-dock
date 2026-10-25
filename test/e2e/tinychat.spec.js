@@ -1018,6 +1018,13 @@ test("resumes a session from the Pi history", async () => {
 
 test("deletes one history item after confirmation", async () => {
 	await page.locator("#historyButton").click();
+	// The history panel is a side panel at this width, so its scrim only catches
+	// clicks and must not frost the chat behind it.
+	expect(
+		await page.evaluate(
+			() => getComputedStyle(document.getElementById("drawerBackdrop")).backdropFilter,
+		),
+	).toBe("none");
 	const target = page.getByTestId("session-item").filter({ hasText: "過去の会話です" });
 	await expect(target.getByTestId("session-delete")).toBeVisible();
 	await target.getByTestId("session-delete").click();
@@ -1025,6 +1032,12 @@ test("deletes one history item after confirmation", async () => {
 	await expect(dialog).toBeVisible();
 	await expect(dialog).toContainText("完全に削除");
 	await expect(dialog).toContainText("過去の会話です");
+	// A dialog floats over the scrim, so its surface stays readable.
+	const alpha = await page.evaluate(() => {
+		const surface = getComputedStyle(document.getElementById("dialog")).backgroundColor;
+		return Number(/\/\s*([\d.]+)\)|rgba\([^)]*,\s*([\d.]+)\)/.exec(surface)?.slice(1).find(Boolean) ?? 1);
+	});
+	expect(alpha).toBeGreaterThanOrEqual(0.8);
 	await page.getByTestId("local-dialog-confirm").click();
 	await expect(
 		page.getByTestId("session-item").filter({ hasText: "過去の会話です" }),

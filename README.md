@@ -7,7 +7,7 @@
 **Tiny UI. Full Pi. Zero Bloat.**
 
 [![npm version](https://img.shields.io/npm/v/pi-tinychat)](https://www.npmjs.com/package/pi-tinychat)
-[![license](https://img.shields.io/npm/l/pi-tinychat)](https://github.com/VarYUvrc/pi-tinychat/blob/main/LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/VarYUvrc/pi-tinychat/blob/main/LICENSE)
 
 English | [日本語](docs/README.ja.md)
 
