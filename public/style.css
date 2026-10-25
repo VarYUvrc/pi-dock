@@ -25,16 +25,16 @@
 	--shadow:
 		0 18px 44px rgba(44, 35, 26, 0.13), 0 2px 8px rgba(44, 35, 26, 0.06);
 	--radius: 14px;
-	--glass-core: color-mix(in srgb, var(--bg-elevated) 56%, transparent);
-	--glass-edge: color-mix(in srgb, var(--bg-elevated) 14%, transparent);
+	--glass-core: color-mix(in srgb, var(--bg-elevated) 38%, transparent);
+	--glass-edge: color-mix(in srgb, var(--bg-elevated) 5%, transparent);
 	--glass: radial-gradient(
 		125% 120% at 50% 42%,
 		var(--glass-core) 0%,
 		var(--glass-edge) 100%
 	);
-	--glass-field: color-mix(in srgb, var(--bg) 44%, transparent);
-	--glass-hover: color-mix(in srgb, var(--surface) 50%, transparent);
-	--glass-blur: blur(16px) saturate(1.25);
+	--glass-field: color-mix(in srgb, var(--bg) 34%, transparent);
+	--glass-hover: color-mix(in srgb, var(--surface) 40%, transparent);
+	--glass-blur: blur(26px) saturate(1.25);
 }
 
 :root[data-theme="dark"] {
@@ -708,6 +708,7 @@ body.resizing-plan * {
 	overscroll-behavior: contain;
 	scrollbar-width: thin;
 	scrollbar-color: var(--line-strong) transparent;
+	transition: filter 0.12s ease-out;
 }
 
 .scroller::-webkit-scrollbar {
@@ -1781,7 +1782,7 @@ body.resizing-plan * {
 	top: -6px;
 	z-index: 1;
 	padding: 4px 4px 8px;
-	background: color-mix(in srgb, var(--bg-elevated) 52%, transparent);
+	background: color-mix(in srgb, var(--bg-elevated) 42%, transparent);
 }
 
 .menu-search input {
@@ -2472,6 +2473,13 @@ body.resizing-plan * {
 	background: var(--glass);
 	-webkit-backdrop-filter: var(--glass-blur);
 	backdrop-filter: var(--glass-blur);
+}
+
+/* Chromium's backdrop-filter does not sample the composited chat scroller, so
+   the chat behind a glass surface is blurred at the source instead. */
+.app:has(.popover:not([hidden]), .drawer:not([hidden]), .dialog-layer:not([hidden]))
+	.scroller {
+	filter: blur(12px);
 }
 
 .dialog h2 {
