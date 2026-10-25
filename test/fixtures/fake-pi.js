@@ -263,6 +263,10 @@ function formatPlan(plan) {
 	return lines.length ? lines.join("\n") : "No plan";
 }
 
+function normalizeNote(value) {
+	return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
 /**
  * @param {any} args
  * @returns {PiToolOutput}
@@ -272,6 +276,7 @@ function applyPlan(args) {
 	let items = (session.plan?.items ?? []).map((item) => ({ ...item }));
 	let nextId = session.plan?.nextId ?? 1;
 	let title = session.plan?.title;
+	let note = session.plan?.note;
 	if (args.action === "set") {
 		items = [];
 		for (const raw of args.items ?? []) {
@@ -281,22 +286,28 @@ function applyPlan(args) {
 			items.push({ id, text, status: raw.status ?? current?.status ?? "pending" });
 		}
 		title = args.title;
+		note = normalizeNote(args.note) || undefined;
 	} else if (args.action === "add") {
 		items.push({ id: `p${nextId++}`, text: args.text, status: args.status ?? "pending" });
+		if (args.note !== undefined) note = normalizeNote(args.note) || undefined;
 	} else if (args.action === "update") {
 		const item = items.find((candidate) => candidate.id === args.id);
 		if (item) {
 			if (args.text) item.text = args.text;
 			if (args.status) item.status = args.status;
 		}
+		if (args.note !== undefined) note = normalizeNote(args.note) || undefined;
 	} else if (args.action === "remove") {
 		items = items.filter((item) => item.id !== args.id);
 	} else if (args.action === "clear") {
 		items = [];
 		nextId = 1;
 		title = undefined;
+		note = undefined;
+	} else if (args.action === "note") {
+		note = normalizeNote(args.note) || undefined;
 	}
-	session.plan = { ...(title ? { title } : {}), items, nextId };
+	session.plan = { ...(title ? { title } : {}), ...(note ? { note } : {}), items, nextId };
 	pushPlanEntry(session.plan);
 	return {
 		content: [{ type: "text", text: formatPlan(session.plan) }],
@@ -471,6 +482,45 @@ function chunk(text, size = 5) {
 async function planPrompt(message) {
 	const current = session.plan;
 	let args;
+	if (message.includes("note")) {
+		await streamAssistant([
+			{
+				type: "toolCall",
+				name: "tiny_plan",
+				args: {
+					action: "set",
+					title: "実装計画",
+					note: "まずRPCとUIの現状を確認します。",
+					items: [
+						{ text: "RPCの確認", status: "done" },
+						{ text: "UIの実装", status: "done" },
+						{ text: "既存機能との統合", status: "in_progress" },
+						{ text: "E2Eテスト", status: "pending" },
+						{ text: "最終検証", status: "pending" },
+					],
+				},
+			},
+		]);
+		await runTool();
+		await sleep(2000);
+		await streamAssistant([
+			{
+				type: "toolCall",
+				name: "tiny_plan",
+				args: {
+					action: "note",
+					note: "復元分岐を修正中。次にテストを追加します。",
+				},
+			},
+		]);
+		await runTool();
+		await sleep(300);
+		await streamAssistant(
+			[{ type: "text", text: "進捗メモを更新しました。".repeat(80) }],
+			{ slow: true },
+		);
+		return;
+	}
 	if (message.includes("clear")) {
 		args = { action: "clear" };
 	} else if (message.includes("advance")) {
@@ -876,6 +926,20 @@ Then run one command.`,
 		]);
 		for (const call of calls) await runTool(call);
 		await streamAssistant([{ type: "text", text: "静かに完了しました。" }]);
+		return;
+	}
+
+	if (message.includes("progress")) {
+		const { calls } = await streamAssistant([
+			{ type: "toolCall", name: "read", args: { path: "src/app.js" } },
+			{ type: "toolCall", name: "grep", args: { pattern: "TODO" } },
+			{ type: "toolCall", name: "bash", args: { command: "echo progress" } },
+		]);
+		for (const call of calls) await runTool(call);
+		await streamAssistant(
+			[{ type: "text", text: "進捗を確認しています。".repeat(80) }],
+			{ slow: true },
+		);
 		return;
 	}
 

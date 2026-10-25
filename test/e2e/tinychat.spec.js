@@ -709,6 +709,37 @@ test("shows, advances and clears the agent plan", async () => {
 	await expect(page.getByTestId("plan-item")).toHaveCount(0);
 });
 
+test("shows the plan note in the main screen without rebuilding the plan list", async () => {
+	await send("plannote");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	const progress = page.getByTestId("run-progress");
+	await expect(progress).toBeVisible({ timeout: 10_000 });
+	await expect(progress).toContainText("まずRPCとUIの現状を確認します。");
+
+	// A note-only plan update must not replace the list nodes.
+	const first = page.getByTestId("plan-item").first();
+	await first.evaluate((element) => {
+		element.dataset.reuseCheck = "kept";
+	});
+	await expect(progress).toContainText("復元分岐を修正中。次にテストを追加します。", {
+		timeout: 10_000,
+	});
+	await expect(first).toHaveAttribute("data-reuse-check", "kept");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+
+	await expectDone();
+	await expect(progress).toHaveCount(0);
+});
+
+test("shows a derived progress line after several tools", async () => {
+	await send("progress");
+	const progress = page.getByTestId("run-progress");
+	await expect(progress).toBeVisible({ timeout: 10_000 });
+	await expect(progress).toContainText("実行 echo progress");
+	await expectDone();
+	await expect(progress).toHaveCount(0);
+});
+
 test("keeps the plan on the right and only shows the current plan", async () => {
 	const plan = page.locator("#planPanel");
 	await expect(plan).toBeVisible();
