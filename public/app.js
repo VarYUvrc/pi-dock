@@ -25,6 +25,10 @@ const THEMES = ["system", "light", "dark"];
 const MAX_TOOL_OUTPUT = 40_000;
 const LIVE_RENDER_MS = 250;
 const HISTORY_PAGE = 50;
+const RUN_PROGRESS_DELAY_MS = 10_000;
+const RUN_PROGRESS_TOOLS = 3;
+const RUN_PROGRESS_DETAIL_MS = 30_000;
+const RUN_PROGRESS_DETAIL_TOOLS = 5;
 
 const $ = (id) => document.getElementById(id);
 const dom = {
@@ -115,6 +119,7 @@ const state = {
 	commands: [],
 	messages: [],
 	plan: null,
+	runNote: null,
 	attachments: [],
 	live: null,
 	tools: {},
@@ -157,6 +162,9 @@ let statsInFlight = false;
 let statsQueued = false;
 let statsGeneration = 0;
 let elapsedTimer = 0;
+let planSignature = "";
+let runStatusSignature = "";
+let lastRunProgressStage = 0;
 let composing = false;
 let compositionEndedAt = Number.NEGATIVE_INFINITY;
 let dialogReturnFocus = null;
@@ -306,6 +314,7 @@ async function refreshSnapshot() {
 	state.levels = snapshot.levels?.length ? snapshot.levels : ["off"];
 	state.commands = snapshot.commands ?? [];
 	state.plan = settings.plan ? (snapshot.plan ?? null) : null;
+	state.runNote = state.running ? (state.plan?.note ?? null) : null;
 	state.statuses =
 		snapshot.statuses && typeof snapshot.statuses === "object" ? { ...snapshot.statuses } : {};
 	state.widgets =
@@ -332,6 +341,9 @@ async function refreshSnapshot() {
 	state.dialogs = [];
 	openKeys.clear();
 	messageNodes.clear();
+	planSignature = "";
+	runStatusSignature = "";
+	lastRunProgressStage = 0;
 	dom.messageList.innerHTML = "";
 	stickToBottom = true;
 	renderChrome();
@@ -391,6 +403,7 @@ function handleRecord(record) {
 			state.live = null;
 			state.aborting = false;
 			state.pendingUser = null;
+			state.runNote = null;
 			state.statuses = {};
 			state.widgets = {};
 			state.extensionTitle = "";
@@ -404,7 +417,9 @@ function handleRecord(record) {
 		case "tinychat:plan":
 			if (!settings.plan) return;
 			state.plan = record.plan ?? null;
+			state.runNote = state.running ? (record.plan?.note ?? null) : null;
 			renderPlan();
+			renderRunStatus();
 			return;
 		case "agent_start":
 			state.running = true;
@@ -416,6 +431,9 @@ function handleRecord(record) {
 			state.aborting = false;
 			state.retry = null;
 			state.diff = null;
+			state.runNote = null;
+			runStatusSignature = "";
+			lastRunProgressStage = 0;
 			state.sendMode = "steer";
 			state.live = { blocks: [], tools: state.tools };
 			startStatsPolling();
@@ -433,6 +451,9 @@ function handleRecord(record) {
 			state.sendMode = "steer";
 			state.live = null;
 			state.tools = {};
+			state.runNote = null;
+			runStatusSignature = "";
+			lastRunProgressStage = 0;
 			stopStatsPolling();
 			stopElapsedTimer();
 			renderChrome();
@@ -2394,10 +2415,15 @@ function closePlanDrawer() {
 function applyPlanSetting() {
 	if (!settings.plan) {
 		state.plan = null;
+		state.runNote = null;
 		planDrawerOpen = false;
 	}
+	planSignature = "";
+	runStatusSignature = "";
+	lastRunProgressStage = 0;
 	syncPlanPanelState();
 	renderPlan();
+	renderRunStatus();
 	if (state.menu === "settings") renderSettingsMenu();
 	if (settings.plan) refreshSnapshot().catch(() => {});
 }
@@ -2711,9 +2737,18 @@ function scheduleLive(immediate = false) {
 
 let previousPlanStatuses = new Map();
 
+function planListSignature(plan) {
+	const items = Array.isArray(plan?.items) ? plan.items : [];
+	return JSON.stringify({
+		title: plan?.title ?? "",
+		items: items.map((item) => [item.id, item.status, item.text]),
+	});
+}
+
 function renderPlan() {
 	if (!settings.plan) {
 		previousPlanStatuses = new Map();
+		planSignature = "";
 		dom.planItems.replaceChildren();
 		dom.planPanel.classList.remove("has-plan");
 		dom.planEmpty.hidden = false;
@@ -2729,9 +2764,13 @@ function renderPlan() {
 	dom.planTitle.textContent = hasPlan ? plan.title || "Plan" : "Plan";
 	if (!hasPlan) {
 		previousPlanStatuses = new Map();
+		planSignature = "";
 		dom.planItems.replaceChildren();
 		return;
 	}
+	const signature = planListSignature(plan);
+	if (signature === planSignature) return;
+	planSignature = signature;
 	// Stagger checkmarks that turn done together so a batched plan update still
 	// reads as steps filling in one by one.
 	const newlyDone = [];
@@ -3281,14 +3320,100 @@ function formatElapsed(ms) {
 	return `${pad2(hours)}h ${pad2(minutes)}m ${pad2(seconds)}s`;
 }
 
+function runTools() {
+	return Object.values(state.tools).filter((tool) => tool && !isPlanTool(tool.name));
+}
+
+function runToolCount() {
+	return runTools().length;
+}
+
+function latestRunTool() {
+	const tools = runTools();
+	if (!tools.length) return null;
+	let latest = tools[tools.length - 1];
+	for (const tool of tools) {
+		if ((tool.startedAt ?? 0) >= (latest.startedAt ?? 0)) latest = tool;
+	}
+	return latest;
+}
+
+function nextPlanItem() {
+	const items = Array.isArray(state.plan?.items) ? state.plan.items : [];
+	const current = items.findIndex((item) => item.status === "in_progress");
+	if (current !== -1) {
+		return items.slice(current + 1).find((item) => item.status === "pending") ?? null;
+	}
+	return items.find((item) => item.status === "pending") ?? null;
+}
+
+function runToolLabel(tool) {
+	const verb = t(`run.tool.${toolKind(tool?.name)}`);
+	const summary = toolSummary(tool?.name, tool?.args).replace(/\s+/g, " ").trim();
+	return summary ? `${verb} ${summary}` : verb;
+}
+
+function runProgressStage() {
+	if (
+		!settings.plan ||
+		!state.running ||
+		state.compacting ||
+		state.retry ||
+		state.aborting
+	) {
+		return 0;
+	}
+	const elapsed = Number.isFinite(state.runStartedAt) ? Date.now() - state.runStartedAt : 0;
+	const toolCount = runToolCount();
+	if (elapsed >= RUN_PROGRESS_DETAIL_MS && toolCount >= RUN_PROGRESS_DETAIL_TOOLS) return 2;
+	if (state.runNote || elapsed >= RUN_PROGRESS_DELAY_MS || toolCount >= RUN_PROGRESS_TOOLS) {
+		return 1;
+	}
+	return 0;
+}
+
+function runProgressMarkup(stage) {
+	if (!stage) return "";
+	const note =
+		typeof state.runNote === "string" ? state.runNote.replace(/\s+/g, " ").trim() : "";
+	const tool = latestRunTool();
+	const toolLabel = tool ? runToolLabel(tool) : "";
+	const detailed = stage >= 2;
+	const parts = [];
+	if (note) parts.push(note);
+	if (toolLabel) parts.push(toolLabel);
+	if (!note && !toolLabel) parts.push(t("run.thinking"));
+	if (detailed) {
+		const count = runToolCount();
+		if (count) parts.push(t("run.tools", { count }));
+		if (!note) {
+			const next = nextPlanItem();
+			if (next?.text) {
+				parts.push(`${t("run.next")}: ${next.text.replace(/\s+/g, " ").trim()}`);
+			}
+		}
+	}
+	const text = parts.filter(Boolean).join(" · ");
+	if (!text) return "";
+	const kind = note ? "note" : tool ? "tool" : "thinking";
+	const iconKind = tool ? toolKind(tool.name) : "";
+	const icon = note
+		? "i-plan"
+		: tool
+			? `i-${iconKind === "web" ? "globe" : iconKind}`
+			: "i-spark";
+	const escaped = escapeHtml(text);
+	return `<div class="run-progress" data-testid="run-progress" data-kind="${kind}" title="${escaped}"><svg class="icon" aria-hidden="true"><use href="#${icon}"/></svg><span class="run-progress-text">${escaped}</span></div>`;
+}
+
 function updateElapsed() {
 	const element = dom.runStatus.querySelector("[data-testid='run-elapsed']");
-	if (!element) return;
-	if (!Number.isFinite(state.runStartedAt)) {
-		element.textContent = "";
-		return;
+	if (element) {
+		if (!Number.isFinite(state.runStartedAt)) element.textContent = "";
+		else element.textContent = formatElapsed(Date.now() - state.runStartedAt);
 	}
-	element.textContent = formatElapsed(Date.now() - state.runStartedAt);
+	const stage = runProgressStage();
+	if (stage !== lastRunProgressStage) renderRunStatus();
 }
 
 function startElapsedTimer() {
@@ -3310,17 +3435,22 @@ function renderRunStatus() {
 	const active = state.running || state.aborting || state.compacting || Boolean(state.retry);
 	dom.runStatus.hidden = !active;
 	if (!active) {
+		runStatusSignature = "";
+		lastRunProgressStage = 0;
 		stopElapsedTimer();
 		dom.runStatus.replaceChildren();
 		return;
 	}
+	const stage = runProgressStage();
+	lastRunProgressStage = stage;
+	const progress = runProgressMarkup(stage);
 	const text = state.compacting
 		? "Compacting context"
 		: state.retry
 			? `Retry ${state.retry.attempt}/${state.retry.maxAttempts}`
 			: "";
 	const diff = state.diff;
-	dom.runStatus.innerHTML = `<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>${
+	const meta = `<div class="run-meta"><span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>${
 		text ? `<span>${escapeHtml(text)}</span>` : ""
 	}${
 		diff && (diff.added || diff.removed)
@@ -3330,7 +3460,12 @@ function renderRunStatus() {
 		Number.isFinite(state.runStartedAt)
 			? '<span class="run-elapsed" data-testid="run-elapsed"></span>'
 			: ""
-	}`;
+	}</div>`;
+	const html = `${progress}${meta}`;
+	if (html !== runStatusSignature) {
+		runStatusSignature = html;
+		dom.runStatus.innerHTML = html;
+	}
 	if (Number.isFinite(state.runStartedAt)) startElapsedTimer();
 	else stopElapsedTimer();
 }

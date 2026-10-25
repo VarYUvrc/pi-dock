@@ -7,7 +7,7 @@
 **Tiny UI. Full Pi. Zero Bloat.**
 
 [![npm version](https://img.shields.io/npm/v/pi-tinychat)](https://www.npmjs.com/package/pi-tinychat)
-[![license](https://img.shields.io/npm/l/pi-tinychat)](https://github.com/VarYUvrc/pi-tinychat/blob/main/LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/VarYUvrc/pi-tinychat/blob/main/LICENSE)
 
 English | [日本語](docs/README.ja.md)
 
@@ -21,7 +21,7 @@ It is for people who like Pi in a terminal but want a calmer screen for long tas
 
 ## What you get
 
-- **A plan you can glance at.** The agent publishes a checklist, and the right panel shows done, current, and pending items while it works.
+- **A plan you can glance at.** The agent publishes a checklist, and the right panel shows done, current, and pending items while it works. A short progress note in the user's language appears in the chat when the agent changes phase.
 - **Context control you can actually feel.** Set auto-compaction at 25%, 50%, or 75% of the model window, or leave Pi's default. See the context ring and the exact reserve before the next long turn. Long-context models often get less precise well before the window is full, so 25–50% is a practical range. Open the ring to switch presets, or run `/compact` from the + menu to compact manually.
 - **Sessions that keep running.** Open another conversation without stopping the one in flight. Each session has its own Pi process.
 - **A conversation made for reading.** Streaming Markdown, compact thinking and tool cards, image attachments, and extension dialogs.
@@ -60,9 +60,9 @@ The npm package is published with the `pi-package` keyword, which is what the Pi
 
 ## The plan panel
 
-Pi TinyChat includes a small Pi extension that gives the agent a `tiny_plan` tool. For a multi-step task, the agent writes the complete ordered plan in one call, then marks each step in progress and done as it goes.
+Pi TinyChat includes a small Pi extension that gives the agent a `tiny_plan` tool. For a multi-step task, the agent writes a short provisional plan before the first substantive tool call, then marks each step in progress and done as it goes. The plan keeps its current granularity; the agent uses a one-sentence `note` for the current focus between steps instead of adding micro-steps.
 
-The right panel mirrors that plan immediately and stores it in the Pi session, so reopening or resuming the conversation brings the checklist back. It is the fastest way to see what the agent is doing, what is finished, and what is left.
+The right panel mirrors that plan immediately and stores it in the Pi session, so reopening or resuming the conversation brings the checklist back. The note is shown as a live status line in the chat, while tool activity fills in the finer detail without extra model calls. It is the fastest way to see what the agent is doing, what is finished, and what is left.
 
 ## Options
 

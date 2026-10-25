@@ -8,8 +8,8 @@ const LEGACY_PLAN_STATE_ENTRY = "dock_plan_state";
 /** @typedef {import("./pi-types.js").PiSessionEntry} PiSessionEntry */
 /** @typedef {"pending" | "in_progress" | "done" | "cancelled"} PlanItemStatus */
 /** @typedef {{ id: string, text: string, status: PlanItemStatus }} PlanItem */
-/** @typedef {{ title: string, items: PlanItem[] }} Plan */
-/** @typedef {{ title?: unknown, items?: unknown }} PlanDetails */
+/** @typedef {{ title: string, items: PlanItem[], note?: string }} Plan */
+/** @typedef {{ title?: unknown, items?: unknown, note?: unknown }} PlanDetails */
 
 const STATUSES = new Set(["pending", "in_progress", "done", "cancelled"]);
 
@@ -35,7 +35,8 @@ export function normalizePlan(details) {
 	}
 	const title =
 		typeof plan.title === "string" && plan.title.trim() ? plan.title.trim() : "";
-	return { title, items };
+	const note = typeof plan.note === "string" ? plan.note.replace(/\s+/g, " ").trim() : "";
+	return { title, items, ...(note ? { note } : {}) };
 }
 
 /** @param {PiSessionEntry} entry */

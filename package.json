@@ -1,6 +1,6 @@
 {
 	"name": "pi-tinychat",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "A tiny local web UI for the Pi coding agent with a live plan panel and context compaction presets.",
 	"type": "module",
 	"bin": {

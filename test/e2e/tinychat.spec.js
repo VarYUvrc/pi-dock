@@ -709,6 +709,37 @@ test("shows, advances and clears the agent plan", async () => {
 	await expect(page.getByTestId("plan-item")).toHaveCount(0);
 });
 
+test("shows the plan note in the main screen without rebuilding the plan list", async () => {
+	await send("plannote");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+	const progress = page.getByTestId("run-progress");
+	await expect(progress).toBeVisible({ timeout: 10_000 });
+	await expect(progress).toContainText("まずRPCとUIの現状を確認します。");
+
+	// A note-only plan update must not replace the list nodes.
+	const first = page.getByTestId("plan-item").first();
+	await first.evaluate((element) => {
+		element.dataset.reuseCheck = "kept";
+	});
+	await expect(progress).toContainText("復元分岐を修正中。次にテストを追加します。", {
+		timeout: 10_000,
+	});
+	await expect(first).toHaveAttribute("data-reuse-check", "kept");
+	await expect(page.getByTestId("plan-item")).toHaveCount(5);
+
+	await expectDone();
+	await expect(progress).toHaveCount(0);
+});
+
+test("shows a derived progress line after several tools", async () => {
+	await send("progress");
+	const progress = page.getByTestId("run-progress");
+	await expect(progress).toBeVisible({ timeout: 10_000 });
+	await expect(progress).toContainText("実行 echo progress");
+	await expectDone();
+	await expect(progress).toHaveCount(0);
+});
+
 test("keeps the plan on the right and only shows the current plan", async () => {
 	const plan = page.locator("#planPanel");
 	await expect(plan).toBeVisible();
@@ -1018,6 +1049,13 @@ test("resumes a session from the Pi history", async () => {
 
 test("deletes one history item after confirmation", async () => {
 	await page.locator("#historyButton").click();
+	// The history panel is a side panel at this width, so its scrim only catches
+	// clicks and must not frost the chat behind it.
+	expect(
+		await page.evaluate(
+			() => getComputedStyle(document.getElementById("drawerBackdrop")).backdropFilter,
+		),
+	).toBe("none");
 	const target = page.getByTestId("session-item").filter({ hasText: "過去の会話です" });
 	await expect(target.getByTestId("session-delete")).toBeVisible();
 	await target.getByTestId("session-delete").click();
@@ -1025,6 +1063,12 @@ test("deletes one history item after confirmation", async () => {
 	await expect(dialog).toBeVisible();
 	await expect(dialog).toContainText("完全に削除");
 	await expect(dialog).toContainText("過去の会話です");
+	// A dialog floats over the scrim, so its surface stays readable.
+	const alpha = await page.evaluate(() => {
+		const surface = getComputedStyle(document.getElementById("dialog")).backgroundColor;
+		return Number(/\/\s*([\d.]+)\)|rgba\([^)]*,\s*([\d.]+)\)/.exec(surface)?.slice(1).find(Boolean) ?? 1);
+	});
+	expect(alpha).toBeGreaterThanOrEqual(0.8);
 	await page.getByTestId("local-dialog-confirm").click();
 	await expect(
 		page.getByTestId("session-item").filter({ hasText: "過去の会話です" }),
