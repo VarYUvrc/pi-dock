@@ -3286,7 +3286,7 @@ function formatElapsed(ms) {
 	const hours = Math.floor(total / 3600);
 	const minutes = Math.floor((total % 3600) / 60);
 	const seconds = total % 60;
-	return `${hours}h${pad2(minutes)}m${pad2(seconds)}s`;
+	return `${pad2(hours)}h ${pad2(minutes)}m ${pad2(seconds)}s`;
 }
 
 function updateElapsed() {

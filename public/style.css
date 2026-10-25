@@ -25,6 +25,8 @@
 	--shadow:
 		0 18px 44px rgba(44, 35, 26, 0.13), 0 2px 8px rgba(44, 35, 26, 0.06);
 	--radius: 14px;
+	--glass: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+	--glass-blur: blur(16px) saturate(1.15);
 }
 
 :root[data-theme="dark"] {
@@ -1771,7 +1773,7 @@ body.resizing-plan * {
 	top: -6px;
 	z-index: 1;
 	padding: 4px 4px 8px;
-	background: var(--bg-elevated);
+	background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
 }
 
 .menu-search input {
@@ -2454,6 +2456,14 @@ body.resizing-plan * {
 	border-radius: 16px;
 	background: var(--bg-elevated);
 	box-shadow: var(--shadow);
+}
+
+.popover,
+.drawer,
+.dialog {
+	background: var(--glass);
+	-webkit-backdrop-filter: var(--glass-blur);
+	backdrop-filter: var(--glass-blur);
 }
 
 .dialog h2 {

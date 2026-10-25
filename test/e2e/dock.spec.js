@@ -44,7 +44,7 @@ function ringOffset() {
 }
 
 function elapsedSeconds(text) {
-	const match = /^(\d+)h(\d{2})m(\d{2})s$/.exec(text ?? "");
+	const match = /^(\d{2,})h (\d{2})m (\d{2})s$/.exec(text ?? "");
 	if (!match) return NaN;
 	return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
 }
@@ -1218,8 +1218,8 @@ test("shows the current run elapsed time and keeps it across reloads", async () 
 	await send("long please");
 	const elapsed = page.getByTestId("run-elapsed");
 	await expect(elapsed).toBeVisible({ timeout: 10_000 });
-	await expect(elapsed).toHaveText(/^\d+h\d{2}m\d{2}s$/);
-	await expect(elapsed).not.toHaveText("0h00m00s", { timeout: 5000 });
+	await expect(elapsed).toHaveText(/^\d{2,}h \d{2}m \d{2}s$/);
+	await expect(elapsed).not.toHaveText("00h 00m 00s", { timeout: 5000 });
 	const before = elapsedSeconds(await elapsed.textContent());
 
 	await input().fill("steer please");
@@ -1233,8 +1233,8 @@ test("shows the current run elapsed time and keeps it across reloads", async () 
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
 	const restored = page.getByTestId("run-elapsed");
 	await expect(restored).toBeVisible({ timeout: 10_000 });
-	await expect(restored).toHaveText(/^\d+h\d{2}m\d{2}s$/);
-	await expect(restored).not.toHaveText("0h00m00s");
+	await expect(restored).toHaveText(/^\d{2,}h \d{2}m \d{2}s$/);
+	await expect(restored).not.toHaveText("00h 00m 00s");
 
 	await expectDone();
 	await expect(page.getByTestId("run-elapsed")).toHaveCount(0);

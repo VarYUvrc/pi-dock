@@ -1,77 +1,44 @@
+<p>
+  <img src="../public/favicon.svg" width="48" height="48" alt="Pi TinyChat アイコン" />
+</p>
+
 # Pi TinyChat
 
 **Tiny UI. Full Pi. Zero Bloat.**
 
 [English](../README.md) | 日本語
 
-Pi TinyChat は、[Pi coding agent](https://pi.dev) をブラウザから使うための小さなローカル Web UI です。Pi のターミナル操作に、広い画面・複数セッション・読みやすい Plan 表示を足します。Pi 自体を作り直すことはしません。
+Pi TinyChat は、[Pi coding agent](https://pi.dev) をローカルブラウザで開くための小さな UI です。左に会話、右に Plan。エージェントの作業は Pi がそのまま続けます。
 
-![Pi TinyChat](https://raw.githubusercontent.com/VarYUvrc/pi-tinychat/main/docs/images/pi-tinychat.png)
+ターミナルの Pi は好きだけど、長時間の作業はもう少し落ち着いた画面で見たい。そんな人のための、余計なアプリを増やさないローカル UI です。
 
 > Pi TinyChat は独立したコミュニティプロジェクトです。Pi の公式プロジェクトではなく、Pi のメンテナとは関係ありません。
 
-## こんな人向け
-
-Pi をターミナルで使っていて、次のように感じている人へ。
-
-- 会話と現在の Plan を 1 画面で見たい
-- 実行中のセッションを残したまま、別の会話を開きたい
-- Plan の項目をチェックボックスで確認したい
-- 日本語 IME の変換確定 Enter で誤送信したくない
-- Pi の認証・モデル・設定・履歴をそのまま使いたい
-
-Pi TinyChat は Pi の TUI を置き換えるものではありません。画面の広さ、見通しのよさ、セッションの扱いを足すための薄い UI です。
-
 ## できること
 
-- **Plan パネル** — 状態・チェックボックス・進捗を表示します。同梱の Plan ツールが Plan を Pi セッションの custom entry として保存し、エージェントが変更した内容をそのまま即時反映します。ツール実行から進捗を推測して項目を進めることはありません。
-- **独立したセッション** — セッションごとに Pi プロセスを保持するため、会話を切り替えても実行中の処理は止まりません。
-- **会話表示** — ストリーミング、思考・ツールのコンパクトなカード、Markdown、画像添付、拡張ダイアログ。
-- **モデル / コンテキスト** — モデル、推論強度、コンテキスト使用量、自動圧縮しきい値。しきい値は現在のモデルのコンテキストに対する % で表示します。
-- **履歴** — Pi セッションの一覧・再開・名前変更・削除。
-- **通知** — 英語 / 日本語のトーストとダイアログ、ライト・ダーク・システムテーマ、幅を変えられる Plan パネル、IME 確定 Enter 対策。
+- **Plan をひと目で。** エージェントがチェックリストを公開し、右パネルに完了・実行中・待機中の項目が表示されます。
+- **セッションを止めずに切り替え。** 実行中の会話を残したまま、別の会話を開けます。セッションごとに Pi プロセスを持ちます。
+- **読みやすい会話。** ストリーミング Markdown、コンパクトな思考・ツールカード、画像添付、拡張ダイアログ。
+- **使い慣れた Pi の設定。** ログイン、モデル、推論強度、コンテキスト使用量、自動圧縮、履歴は Pi のものをそのまま使います。
+- **小さい構成。** ブラウザは素の ES Module、通信は Pi RPC の JSONL。React、バンドラ、データベース、実行時依存はありません。
 
-## 使い始める前に
+## クイックスタート
 
-Node.js **22.19 以上**が必要です。Node 20 はサポートしません。Pi 本体もインストールしてください。
+**Node.js 22.19 以上**と Pi が必要です。
 
 ```bash
-npm install -g @earendil-works/pi-coding-agent
+node --version
 pi --version
 ```
 
-### 認証
-
-Pi TinyChat から `/login` を実行することはできません。初回認証はターミナルで済ませてください。
+認証はターミナルで一度だけ済ませます。Pi TinyChat はそのログインをそのまま使います。
 
 ```bash
 pi
-# 起動したら /login
+/login
 ```
 
-または、Pi TinyChat を起動するシェルでプロバイダの API キーを設定します。例: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENCODE_API_KEY` / `DEEPSEEK_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_API_KEY`。ローカルモデルは `models.json` で設定します。
-
-### モデル
-
-ターミナルの `/model`、または Pi の `settings.json` にある `defaultProvider` / `defaultModel` で選択します。
-
-### 動作確認
-
-```bash
-pi -p "Reply with exactly: ok"
-# または
-pi auth check --provider <provider>
-```
-
-### プロジェクトの `.pi` を使う場合
-
-プロジェクト独自の `.pi` 設定・拡張・skills を使う場合は、そのプロジェクトで一度 `pi` を起動し、`/trust` を実行してください。RPC モードでは trust プロンプトが出ないため、未 trust のプロジェクト設定は読み込まれません。Pi TinyChat が自動で trust することはありません。
-
-`PI_CODING_AGENT_DIR` を変更している場合は、Pi TinyChat を起動する環境でも同じ値を設定してください。認証情報は Pi の `~/.pi/agent` に保存され、Pi TinyChat 独自の認証情報は作りません。
-
-## 起動
-
-**npm ではまだ公開していません。** 現時点ではリポジトリを clone して起動してください。
+リポジトリから起動します（npm パッケージは公開準備中です）。
 
 ```bash
 git clone https://github.com/VarYUvrc/pi-tinychat.git
@@ -80,18 +47,22 @@ npm install
 npm start -- --cwd /path/to/project
 ```
 
-ローカルにインストールする場合:
+ブラウザが `http://127.0.0.1:4310` で開きます。ポートが埋まっているときは `--port` で変更できます。
+
+コマンドをローカルにインストールする場合:
 
 ```bash
 npm install -g .
 pi-tinychat --cwd /path/to/project
 ```
 
-公開後の起動コマンドは次の形を予定しています。
+`/login` の代わりに API キーを使う場合は、Pi TinyChat を起動するシェルでプロバイダのキーを設定します。例: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENCODE_API_KEY` / `DEEPSEEK_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_API_KEY`。
 
-```bash
-npx pi-tinychat --cwd /path/to/project
-```
+## Plan パネル
+
+Pi TinyChat には、エージェントに Plan ツールを渡す小さな Pi 拡張が同梱されています。複数ステップの作業では、エージェントが最初に全体のチェックリストを書き、作業に合わせて各項目を実行中・完了へ更新します。
+
+右パネルはその内容をすぐに反映し、Plan は Pi セッションに保存されます。会話を再開したときもチェックリストが戻るので、いま何をしているか、何が終わったか、次は何かが一目で分かります。
 
 ## オプション
 
@@ -105,47 +76,39 @@ npx pi-tinychat --cwd /path/to/project
 --version       バージョン
 ```
 
-## 他の Pi Web UI との違い
+## 仕組み
 
-Pi の Web UI には有用な選択肢があり、Pi TinyChat は機能の数で競争しません。
+- **ローカル完結。** localhost にのみ待ち受け、Host・Origin・起動ごとのトークンを検証します。Markdown はエスケープを優先します。
+- **Pi の状態をそのまま。** 会話と設定は Pi のファイルを使います。UI 設定は `localStorage` に置き、独自のデータベースやログストアは作りません。
+- **セッションごとに独立したプロセス。** バックグラウンドのセッションは生き続けるため、会話を切り替えても実行中の処理は止まりません。
+- **公式 RPC。** Pi を `pi --mode rpc` の独立プロセスとして起動し、JSONL で通信します。エージェントの動作は Pi に任せます。
 
-- **[pi-web](https://github.com/agegr/pi-web)** — Next.js・React・Pi SDK を使う高機能な Web ワークスペース。セッション分岐、Git Worktree、ファイル閲覧、MCP・モデル・Skills 管理、サブエージェント、モバイル対応などを備えます。
-- **[pi-web-simple](https://pi.dev/packages/pi-web-simple)** — Pi 公式 RPC を使う Web UI。Git 操作やファイル管理も備えます。
-- **[pipane](https://github.com/mike-heunher/pipane)** — Pi RPC を使うもう 1 つのブラウザ UI。
+## 他の Pi UI
 
-Pi TinyChat は意図的に小さく留まります。Pi の機能を再実装するのではなく Pi に接続し、会話と Plan の体験に画面を割り当てます。
-
-## 設計
-
-- **実行時依存ゼロ。** React、Next.js、バンドラ、ビルド工程はありません。ブラウザは素の ES Module を読みます。
-- **公式 RPC。** `pi --mode rpc` で Pi を独立プロセスとして起動し、JSONL で通信します。エージェントの動作は Pi 本体に委ねます。
-- **Pi ネイティブな状態。** 会話と設定は Pi のファイルを使います。独自の DB・ログ・設定ファイルは持たず、UI 設定は `localStorage` に置きます。
-- **独立したセッション。** セッションごとに Pi プロセスを保持するため、会話を切り替えても実行中の処理は止まりません。
-- **ローカルファースト。** localhost にのみ待ち受け、Host・Origin・起動ごとのトークンを検証します。Markdown はエスケープを優先します。
-- **集中した UI。** 思考とツール呼び出しはコンパクトにまとめ、Plan はエージェントが公開した内容だけを表示します。Pi TinyChat がツール実行から進捗を推測することはありません。
-- **互換性を優先した内部名。** Plan ツールとセッション entry は、既存の Pi セッションに保存された Plan を読めるよう、歴史的な `dock_plan` / `dock_plan_state` の名前を維持しています。
-
-ここでの「軽量」は、構成・依存・責務が少ないことを指します。メモリ使用量や機能数の最小性を保証するものではありません。
+| UI | 向いている場面 |
+| --- | --- |
+| **Pi TinyChat** | Plan パネル付きの小さなローカルチャット。ビルド工程も実行時依存もありません。 |
+| [pi-web](https://github.com/agegr/pi-web) | セッション分岐、Git Worktree、ファイル閲覧、MCP・モデル・Skills 管理、サブエージェント、モバイルまで備えたフル Web ワークスペース。 |
+| [pi-web-simple](https://pi.dev/packages/pi-web-simple) | Git とファイル管理を備えた、RPC ベースのシンプルな Web UI。 |
+| [pipane](https://github.com/mike-heunher/pipane) | Pi を RPC でつなぐもう 1 つのブラウザ UI。 |
 
 ## うまく動かないとき
 
 - **`pi` が見つからない** — `--pi /path/to/pi` または `PI_TINYCHAT_PI` を指定します。
 - **モデルが `unknown`、送信に失敗する** — ターミナルで `/login` するか、Pi TinyChat を起動するシェルに API キーを設定します。`pi auth check --provider <provider>` で確認できます。
-- **プロジェクトの `.pi` 設定が効かない** — そのプロジェクトで一度 `pi` を起動し、`/trust` を実行します。
-- **履歴が空 / 別プロジェクトの履歴が出る** — `--cwd` が Pi で使ったディレクトリと一致しているか確認します。`PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` も Pi TinyChat 側に必要です。
+- **プロジェクトの `.pi` 設定が効かない** — そのプロジェクトで一度 `pi` を起動し、`/trust` を実行します。RPC モードも Pi の trust ルールに従います。
+- **履歴が空 / 別プロジェクトの履歴が出る** — `--cwd` が Pi で使ったディレクトリと一致しているか確認します。`PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` を変更している場合は、Pi TinyChat 側にも同じ値を設定します。
 - **ポートが使用中** — `--port 4311` など別のポートを指定します。
 
-## 対応 Pi バージョン / 既知の制約
+## 対応バージョンと制約
 
-- Pi **1.4.0** で動作確認しています。CI では 1.4.0 と週次の最新 Pi を検証します。厳密な semver 保証はせず、Pi の更新に追従が必要になる場合があります。
-- TUI 専用のカスタム UI（`custom()` など）は再現しません。RPC ダイアログのみ対応します。
-- `/login` `/tree` `/fork` `/clone` など TUI 専用コマンドは Pi TinyChat から実行できません。
-- プロジェクトの `.pi` 設定は Pi の trust に従います。事前の `/trust` が必要です。
-- `sessionDir` 設定（`PI_CODING_AGENT_SESSION_DIR` 以外）は履歴一覧に反映されない場合があります。
-- Plan 設定を OFF にしても、起動済みの Pi プロセスから Plan 拡張は外れません。OFF は Pi TinyChat の Plan UI のみを無効化します。
-- バックグラウンドセッションは Pi プロセスを保持するため、同時数に比例してメモリ/CPU を使います。
-- 複数タブ間のセッション切替は即時同期しません。
-- fork / clone / ブランチツリー表示は未対応です。
+| 項目 | 内容 |
+| --- | --- |
+| Pi のバージョン | **1.4.0** で動作確認済み。CI では週次の最新 Pi も検証します。 |
+| ターミナル向け機能 | `/login` `/tree` `/fork` `/clone` や TUI 専用のカスタム UI は、Pi のターミナルで使います。 |
+| プロジェクトの `.pi` | Pi の trust に従います。事前にそのプロジェクトで `/trust` を実行してください。 |
+| リソース | セッションを開いている間は Pi プロセスが残るため、同時数に応じてメモリ/CPU を使います。 |
+| 複数タブ | タブ間のセッション切替は同期しません。 |
 
 ## 開発
 
@@ -166,7 +129,7 @@ npm run check          # 上記をまとめて実行
 npm run smoke -- --cwd /path/to/project "Reply with exactly: pong"
 ```
 
-一時ファイルはリポジトリ内の `tmp/` を使います。CI は Ubuntu / Windows の Node 22.19 で実行し、週次で最新 Pi との互換性を確認します。公開用の release workflow はまだありません。
+一時ファイルはリポジトリ内の `tmp/` を使います。CI は Ubuntu / Windows の Node 22.19 で実行し、週次で最新 Pi との互換性を確認します。
 
 ## ライセンス
 
