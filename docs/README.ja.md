@@ -14,6 +14,8 @@ Pi TinyChat は、[Pi coding agent](https://pi.dev) をローカルブラウザ�
 
 > Pi TinyChat は独立したコミュニティプロジェクトです。Pi の公式プロジェクトではなく、Pi のメンテナとは関係ありません。
 
+![Pi TinyChat のスクリーンショット](images/pi-tinychat.png)
+
 ## できること
 
 - **Plan をひと目で。** エージェントがチェックリストを公開し、右パネルに完了・実行中・待機中の項目が表示されます。

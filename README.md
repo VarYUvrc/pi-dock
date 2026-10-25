@@ -14,6 +14,8 @@ It is for people who like Pi in a terminal but want a calmer screen for long tas
 
 > Pi TinyChat is an independent community project. It is not an official Pi project and is not affiliated with the Pi maintainers.
 
+![Pi TinyChat screenshot](docs/images/pi-tinychat.png)
+
 ## What you get
 
 - **A plan you can glance at.** The agent publishes a checklist, and the right panel shows done, current, and pending items while it works.
