@@ -29,7 +29,7 @@ Pi TinyChat is not a replacement for Pi's TUI. It is a thin UI that adds space, 
 - **Conversation view** — streaming output, compact thinking and tool cards, Markdown, image attachments, and extension dialogs.
 - **Models and context** — model, reasoning effort, context usage, and the auto-compaction threshold shown as a percentage of the current model's context window.
 - **History** — list, resume, rename, and delete Pi sessions.
-- **UI** — English and Japanese, light/dark/system themes, resizable plan panel, and IME-safe submit.
+- **Notifications** — English and Japanese toasts and dialogs, light/dark/system themes, a resizable plan panel, and IME-safe submit.
 
 ## Before you start
 

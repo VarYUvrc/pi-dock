@@ -30,10 +30,6 @@ for (const lang of languages) {
 }
 
 const used = new Set();
-const html = await readFile(join(ROOT, "public", "index.html"), "utf8");
-for (const match of html.matchAll(/data-i18n(?:-title|-aria-label|-placeholder)?="([^"]+)"/g)) {
-	used.add(match[1]);
-}
 for (const file of ["app.js", "markdown.js"]) {
 	const source = await readFile(join(ROOT, "public", file), "utf8");
 	for (const match of source.matchAll(/\bt\("([^"]+)"/g)) used.add(match[1]);

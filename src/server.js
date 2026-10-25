@@ -44,6 +44,7 @@ const ASSETS = {
 	"/markdown.js": ["markdown.js", "text/javascript; charset=utf-8"],
 	"/theme-init.js": ["theme-init.js", "text/javascript; charset=utf-8"],
 	"/style.css": ["style.css", "text/css; charset=utf-8"],
+	"/favicon.svg": ["favicon.svg", "image/svg+xml"],
 };
 
 // Only commands the UI needs are reachable from the browser.

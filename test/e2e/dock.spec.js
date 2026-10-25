@@ -161,7 +161,7 @@ test("streams a reply with thinking, tools, markdown and copy", async () => {
 	const tool = work.locator('details[data-testid="tool"]').first();
 	expect(await tool.evaluate((node) => node.open)).toBe(false);
 	await tool.locator("summary").click();
-	await expect(tool).toContainText("引数");
+	await expect(tool).toContainText("Arguments");
 	await expect(tool).toContainText("echo hi");
 	await expect(tool).toContainText("hi from fake pi");
 	await expect(tool.locator(".dot")).toHaveClass(/done/);
@@ -175,7 +175,7 @@ test("streams a reply with thinking, tools, markdown and copy", async () => {
 	const clipboard = await page.evaluate(() => navigator.clipboard.readText());
 	expect(clipboard).toBe("const answer = 42;");
 	const ring = await page.locator("#contextButton").getAttribute("title");
-	expect(ring).toContain("コンテキスト");
+	expect(ring).toContain("Context");
 });
 
 test("groups multiple tools into a stable work rail and keeps failures visible", async () => {
@@ -190,8 +190,8 @@ test("groups multiple tools into a stable work rail and keeps failures visible",
 	const work = groups.last();
 	await expect(work).toHaveAttribute("data-status", "done");
 	await expect(work.locator(".work-dot.done")).toHaveCount(3);
-	await expect(work.locator(".work-label")).toHaveText("bash・read・grep");
-	await expect(work.locator(".work-label")).toHaveAttribute("title", "bash・read・grep");
+	await expect(work.locator(".work-label")).toHaveText("bash · read · grep");
+	await expect(work.locator(".work-label")).toHaveAttribute("title", "bash · read · grep");
 	const railWidth = await work
 		.locator(".work-rail")
 		.evaluate((node) => node.getBoundingClientRect().width);
@@ -304,7 +304,7 @@ test("uses reasoning, then tool names, then plain-thinking labels", async () => 
 	);
 	await expectDone();
 	const blank = page.getByTestId("work-group").last();
-	await expect(blank.locator(".work-label")).toHaveText("思考");
+	await expect(blank.locator(".work-label")).toHaveText("Thinking");
 });
 
 test("keeps an open live work group stable while its heading streams", async () => {
@@ -341,7 +341,7 @@ test("refreshes the context ring while a response is streaming", async () => {
 	await expect.poll(ringOffset, { timeout: 10_000 }).not.toBe(before);
 	await expectDone();
 	await expect(button).not.toHaveClass(/running/);
-	expect(await button.getAttribute("title")).toContain("コンテキスト");
+	expect(await button.getAttribute("title")).toContain("Context");
 	// The dark arc has to actually grow with the reported usage.
 	const offset = await ringOffset();
 	expect(offset).toBeLessThan(47.12);
@@ -364,11 +364,11 @@ test("stores the compaction threshold as a global percentage", async () => {
 	await page.locator("#contextButton").click();
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
 	await expect(
-		page.locator("#contextMenu .setting-row").filter({ hasText: "自動圧縮" }),
+		page.locator("#contextMenu .setting-row").filter({ hasText: "Auto-compaction" }),
 	).toHaveCount(1);
 	await page.getByTestId("compaction-25").click();
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "true");
-	await expect(page.locator("#contextButton")).toHaveAttribute("title", /自動圧縮 25%/);
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /Auto-compaction 25%/);
 	const meter = page.getByTestId("compaction-meter");
 	await expect(meter).toBeVisible();
 	await expect(meter).toContainText("1.2k / 250k (0%)");
@@ -386,6 +386,7 @@ test("stores the compaction threshold as a global percentage", async () => {
 
 	await page.getByTestId("compaction-default").click();
 	await expect(page.getByTestId("compaction-50")).toHaveAttribute("aria-pressed", "false");
+	await expect(page.getByTestId("compaction-default")).toHaveAttribute("aria-pressed", "true");
 	saved = JSON.parse(await readFile(settingsFile, "utf8"));
 	expect(saved.compaction.reserveTokens).toBeUndefined();
 	expect(saved.compaction.keepRecentTokens).toBe(12_345);
@@ -395,7 +396,9 @@ test("shows the Pi default compaction before a threshold is chosen", async () =>
 	await page.locator("#contextButton").click();
 	await expect(page.getByTestId("compaction-25")).toHaveAttribute("aria-pressed", "false");
 	await expect(page.getByTestId("compaction-default")).toBeVisible();
-	await expect(page.locator("#contextButton")).toHaveAttribute("title", /自動圧縮 98%/);
+	await expect(page.getByTestId("compaction-default")).toHaveAttribute("aria-pressed", "true");
+	await expect(page.locator('[data-compaction-percent="98"]')).toHaveCount(0);
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /Auto-compaction 98%/);
 	const saved = await readFile(join(workspace.agent, "settings.json"), "utf8").catch(() => "");
 	expect(saved).toBe("");
 });
@@ -528,10 +531,10 @@ test("plus menu searches commands and inserts without sending", async () => {
 	await expect(page.locator("#commandMenu")).toBeVisible();
 	await expect(page.getByTestId("command-item").filter({ hasText: "/fix-tests" })).toHaveCount(1);
 	await expect(page.getByTestId("command-item").filter({ hasText: "/new" })).toHaveCount(1);
-	await expect(page.locator("#commandMenu")).toContainText("プロンプト");
-	await expect(page.locator("#commandMenu")).toContainText("スキル");
-	await expect(page.locator("#commandMenu")).toContainText("拡張");
-	await expect(page.locator("#commandMenu")).toContainText("内蔵");
+	await expect(page.locator("#commandMenu")).toContainText("Prompt");
+	await expect(page.locator("#commandMenu")).toContainText("Skill");
+	await expect(page.locator("#commandMenu")).toContainText("Extension");
+	await expect(page.locator("#commandMenu")).toContainText("Built-in");
 
 	const search = page.locator('[data-role="command-search"]');
 	await search.fill("review");
@@ -643,12 +646,12 @@ test("chooses steer or follow-up while a response is running", async () => {
 	await expect(page.locator('[data-send-mode="followUp"]')).toHaveAttribute("aria-pressed", "true");
 	await input().fill("after this");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("1 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("1 queued");
 
 	await page.locator('[data-send-mode="steer"]').click();
 	await input().fill("now this");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("2 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("2 queued");
 
 	await page.locator("#stopButton").click();
 	await expectDone();
@@ -662,10 +665,10 @@ test("keeps consecutive steer messages in the order they were sent", async () =>
 
 	await input().fill("first steer");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("1 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("1 queued");
 	await input().fill("second steer");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("2 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("2 queued");
 	await expectDone();
 
 	const users = page.getByTestId("message-user");
@@ -880,7 +883,7 @@ test("switches to English without reloading and persists it", async () => {
 	const html = page.locator("html");
 	await expect(html).toHaveAttribute("lang", "ja");
 	await page.locator("#settingsButton").click();
-	await expect(page.locator("#settingsMenu")).toContainText("言語");
+	await expect(page.locator("#settingsMenu")).toContainText("Language");
 	await expect(page.getByTestId("language-select")).toHaveValue("ja");
 	await page.getByTestId("language-select").selectOption("en");
 	await expect(html).toHaveAttribute("lang", "en");
@@ -897,7 +900,7 @@ test("switches to English without reloading and persists it", async () => {
 	await expect(page.getByTestId("language-select")).toHaveValue("en");
 	await page.getByTestId("language-select").selectOption("ja");
 	await expect(html).toHaveAttribute("lang", "ja");
-	await expect(page.locator("#settingsMenu")).toContainText("言語");
+	await expect(page.locator("#settingsMenu")).toContainText("Language");
 });
 
 test("restores only the active branch plan after resuming", async () => {
@@ -1053,7 +1056,7 @@ test("selects and deletes all history beyond the old 60 item limit", async () =>
 	await expect(page.getByTestId("session-more")).toHaveCount(0);
 	await page.locator("#historySelect").click();
 	await page.locator("#historySelectAll").click();
-	await expect(page.locator("#historyCount")).toHaveText("64 件");
+	await expect(page.locator("#historyCount")).toHaveText("64 items");
 	await page.locator("#historyDelete").click();
 	await expect(page.locator("#dialog")).toContainText("64 件");
 	await page.getByTestId("local-dialog-confirm").click();
@@ -1117,14 +1120,14 @@ test("answers extension dialogs through RPC", async () => {
 	const dialog = page.locator("#dialog");
 	await expect(dialog).toBeVisible();
 	await expect(dialog).toContainText("実行しますか？");
-	await expect(dialog.getByRole("button", { name: "はい" })).toBeFocused();
-	await dialog.getByRole("button", { name: "はい" }).click();
+	await expect(dialog.getByRole("button", { name: "Yes" })).toBeFocused();
+	await dialog.getByRole("button", { name: "Yes" }).click();
 	await expect(page.locator("#dialogLayer")).toBeHidden();
 	await expect(page.getByTestId("message-assistant").last()).toContainText("confirmed=true");
 
 	await send("ask again");
 	await expect(page.locator("#dialog")).toBeVisible();
-	await page.locator("#dialog").getByRole("button", { name: "キャンセル" }).click();
+	await page.locator("#dialog").getByRole("button", { name: "Cancel" }).click();
 	await expect(page.getByTestId("message-assistant").last()).toContainText("confirmed=false");
 });
 
@@ -1221,7 +1224,7 @@ test("shows the current run elapsed time and keeps it across reloads", async () 
 
 	await input().fill("steer please");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("1 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("1 queued");
 	await page.waitForTimeout(1200);
 	const after = elapsedSeconds(await elapsed.textContent());
 	expect(after).toBeGreaterThanOrEqual(before + 1);
@@ -1336,7 +1339,7 @@ test("stopping restores queued steering text", async () => {
 	await expect(page.getByTestId("message-live")).toContainText("chunk 2");
 	await input().fill("keep this for later");
 	await input().press("Control+Enter");
-	await expect(page.locator("#queueBadge")).toHaveText("1 待機");
+	await expect(page.locator("#queueBadge")).toHaveText("1 queued");
 	await page.locator("#stopButton").click();
 	await expectDone();
 	await expect(input()).toHaveValue("keep this for later");
@@ -1353,8 +1356,8 @@ test("compacts the context from the menu", async () => {
 	// Directly after compaction Pi may have no valid context estimate yet.
 	// Show an empty ring without inventing a value or adding a "unknown" label.
 	await expect(page.locator("#contextButton")).toHaveClass(/unknown/);
-	await expect(page.locator("#contextButton")).toHaveAttribute("title", /コンテキスト/);
-	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /不明/);
+	await expect(page.locator("#contextButton")).toHaveAttribute("title", /Context/);
+	await expect(page.locator("#contextButton")).not.toHaveAttribute("title", /unknown/);
 	await expect(page.locator("#ringFg")).toBeVisible();
 	await expect.poll(ringOffset).toBeCloseTo(47.12, 1);
 

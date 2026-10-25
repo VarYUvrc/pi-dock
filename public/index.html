@@ -5,10 +5,7 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="color-scheme" content="light dark" />
 		<title>Pi TinyChat</title>
-		<link
-			rel="icon"
-			href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23d4471f'/%3E%3Cpath d='M6 8h12M6 12.5h12M9 17h6' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E"
-		/>
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<script src="/theme-init.js"></script>
 		<link rel="stylesheet" href="/style.css" />
 	</head>
@@ -38,7 +35,21 @@
 			<symbol id="i-extension" viewBox="0 0 24 24"><path d="M9 4h6v3a2 2 0 1 0 4 0V4h1v6h-3a2 2 0 1 0 0 4h3v6h-6v-3a2 2 0 1 0-4 0v3H4v-6h3a2 2 0 1 0 0-4H4V4h5Z" /></symbol>
 			<symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6" /></symbol>
 			<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 3 20h18L12 4Z" /><path d="M12 10v4M12 17h.01" /></symbol>
-			<symbol id="i-dock" viewBox="0 0 24 24"><path d="M4 8h16M4 13h16M8 18h8" /></symbol>
+			<symbol id="i-tinychat" viewBox="0 0 24 24">
+				<path
+					d="M6.5 3.2H17.5Q21 3.2 21 6.7V15.3Q21 18.8 17.5 18.8H10L5.2 21V18Q3 17.2 3 14.8V6.7Q3 3.2 6.5 3.2Z"
+					fill="var(--accent)"
+					stroke="none"
+				/>
+				<path
+					d="M8 9L11 12L8 15M13 15H16.5"
+					fill="none"
+					stroke="var(--accent-ink)"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				/>
+			</symbol>
 			<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2H10l2 2.5h6.5a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" /></symbol>
 			<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></symbol>
 			<symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z" /></symbol>
@@ -51,9 +62,9 @@
 
 		<div class="app">
 			<header class="topbar">
-				<div class="brand" title="Pi TinyChat" data-i18n-title="app.brandTitle">
-					<svg class="mark" aria-hidden="true"><use href="#i-dock" /></svg>
-					<span class="app-name" data-i18n="app.name">Pi TinyChat</span>
+				<div class="brand" title="Pi TinyChat">
+					<svg class="mark" aria-hidden="true"><use href="#i-tinychat" /></svg>
+					<span class="app-name">Pi TinyChat</span>
 					<span class="session" id="sessionName"></span>
 				</div>
 				<div class="top-actions">
@@ -61,33 +72,33 @@
 						<svg class="icon" aria-hidden="true"><use href="#i-folder" /></svg>
 						<span id="projectLabel"></span>
 					</span>
-					<div class="model-group" id="modelGroup" role="group" data-i18n-aria-label="top.modelGroup" aria-label="Model and reasoning effort">
-						<button class="chip" id="modelButton" type="button" data-i18n-title="top.model" title="Model" aria-haspopup="menu" aria-controls="modelMenu" aria-expanded="false">
+					<div class="model-group" id="modelGroup" role="group" aria-label="Model and reasoning effort">
+						<button class="chip" id="modelButton" type="button" title="Model" aria-haspopup="menu" aria-controls="modelMenu" aria-expanded="false">
 							<svg class="icon" aria-hidden="true"><use href="#i-model" /></svg>
 							<span id="modelLabel">—</span>
 							<svg class="icon chev" aria-hidden="true"><use href="#i-chevron" /></svg>
 						</button>
-						<button class="chip" id="thinkingButton" type="button" data-i18n-title="top.thinking" title="Reasoning effort" aria-haspopup="menu" aria-controls="thinkingMenu" aria-expanded="false">
+						<button class="chip" id="thinkingButton" type="button" title="Reasoning effort" aria-haspopup="menu" aria-controls="thinkingMenu" aria-expanded="false">
 							<svg class="icon" aria-hidden="true"><use href="#i-spark" /></svg>
 							<span id="thinkingLabel">off</span>
 							<svg class="icon chev" aria-hidden="true"><use href="#i-chevron" /></svg>
 						</button>
 					</div>
-					<button class="ring-button" id="contextButton" type="button" data-i18n-title="top.context" title="Context" aria-haspopup="menu" aria-controls="contextMenu" aria-expanded="false">
+					<button class="ring-button" id="contextButton" type="button" title="Context" aria-haspopup="menu" aria-controls="contextMenu" aria-expanded="false">
 						<svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
 							<circle class="ring-bg" cx="10" cy="10" r="7.5" />
 							<circle class="ring-limit" id="ringLimit" cx="10" cy="10" r="7.5" />
 							<circle class="ring-fg" id="ringFg" cx="10" cy="10" r="7.5" />
 						</svg>
 					</button>
-					<button class="icon-btn plan-toggle" id="planToggle" type="button" data-i18n-title="plan.toggle" data-i18n-aria-label="plan.toggle" title="Plan panel" aria-label="Plan panel" aria-expanded="true" aria-pressed="true">
+					<button class="icon-btn plan-toggle" id="planToggle" type="button" title="Plan panel" aria-label="Plan panel" aria-expanded="true" aria-pressed="true">
 						<svg class="icon"><use href="#i-plan" /></svg>
 					</button>
 					<span class="top-sep" aria-hidden="true"></span>
-					<button class="icon-btn" id="historyButton" type="button" data-i18n-title="nav.history" data-i18n-aria-label="nav.history" title="History" aria-label="History">
+					<button class="icon-btn" id="historyButton" type="button" title="History" aria-label="History">
 						<svg class="icon"><use href="#i-history" /></svg>
 					</button>
-					<button class="icon-btn" id="settingsButton" type="button" data-i18n-title="nav.settings" data-i18n-aria-label="nav.settings" title="Settings" aria-label="Settings" aria-haspopup="menu" aria-controls="settingsMenu" aria-expanded="false">
+					<button class="icon-btn" id="settingsButton" type="button" title="Settings" aria-label="Settings" aria-haspopup="menu" aria-controls="settingsMenu" aria-expanded="false">
 						<svg class="icon"><use href="#i-settings" /></svg>
 					</button>
 				</div>
@@ -100,7 +111,7 @@
 			</div>
 
 			<div class="workspace">
-				<section class="chat" data-i18n-aria-label="chat.label" aria-label="Chat">
+				<section class="chat" aria-label="Chat">
 					<main class="scroller" id="scroller">
 						<div class="messages" id="messages">
 							<div class="message-list" id="messageList" aria-live="polite" aria-relevant="additions text"></div>
@@ -108,12 +119,12 @@
 							<div class="run-status" id="runStatus" role="status" hidden></div>
 						</div>
 						<div class="empty" id="empty">
-							<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-dock" /></svg>
+							<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-tinychat" /></svg>
 						</div>
 						<div class="scroll-tail" aria-hidden="true"></div>
 					</main>
 
-					<button class="jump-button" id="jumpButton" type="button" data-i18n-aria-label="nav.jump" aria-label="Jump to latest" hidden>
+					<button class="jump-button" id="jumpButton" type="button" aria-label="Jump to latest" hidden>
 						<svg class="icon"><use href="#i-down" /></svg>
 					</button>
 
@@ -121,16 +132,16 @@
 						<div class="composer-wrap">
 							<div class="widgets" id="widgets" hidden></div>
 							<div class="composer" id="composer">
-								<label class="sr-only" for="input" data-i18n="composer.inputLabel">Message</label>
-								<textarea id="input" rows="1" data-i18n-placeholder="composer.placeholder" placeholder="Message" autocomplete="off" spellcheck="false"></textarea>
+								<label class="sr-only" for="input">Message</label>
+								<textarea id="input" rows="1" placeholder="Message" autocomplete="off" spellcheck="false"></textarea>
 								<div class="attachments" id="attachments" hidden></div>
 								<div class="composer-bar">
 									<div class="composer-left">
 										<div class="composer-tools">
-											<button class="composer-tool" id="commandButton" type="button" data-i18n-title="composer.commands" data-i18n-aria-label="composer.commands" title="Commands" aria-label="Commands" aria-haspopup="dialog" aria-controls="commandMenu" aria-expanded="false">
+											<button class="composer-tool" id="commandButton" type="button" title="Commands" aria-label="Commands" aria-haspopup="dialog" aria-controls="commandMenu" aria-expanded="false">
 												<svg class="icon"><use href="#i-plus" /></svg>
 											</button>
-											<button class="composer-tool" id="imageButton" type="button" data-i18n-title="composer.image" data-i18n-aria-label="composer.image" title="Attach image" aria-label="Attach image">
+											<button class="composer-tool" id="imageButton" type="button" title="Attach image" aria-label="Attach image">
 												<svg class="icon"><use href="#i-image" /></svg>
 											</button>
 											<input id="imageInput" type="file" accept="image/*" multiple hidden />
@@ -138,15 +149,15 @@
 										<div class="composer-statuses" id="composerLeft"></div>
 									</div>
 									<div class="composer-right">
-										<div class="send-mode" id="sendMode" role="group" data-i18n-aria-label="sendMode.group" aria-label="Send mode" hidden>
-											<button type="button" data-send-mode="steer" aria-pressed="true" data-i18n-title="sendMode.steerTitle" title="Interrupt the running turn">Steer</button>
-											<button type="button" data-send-mode="followUp" aria-pressed="false" data-i18n-title="sendMode.followUpTitle" title="Send after the run finishes">Follow-up</button>
+										<div class="send-mode" id="sendMode" role="group" aria-label="Send mode" hidden>
+											<button type="button" data-send-mode="steer" aria-pressed="true" title="Interrupt the running turn">Steer</button>
+											<button type="button" data-send-mode="followUp" aria-pressed="false" title="Send after the run finishes">Follow-up</button>
 										</div>
 										<span class="queue-badge" id="queueBadge" hidden></span>
-										<button class="send-button" id="sendButton" type="button" data-i18n-title="composer.send" data-i18n-aria-label="composer.send" title="Send (Ctrl+Enter)" aria-label="Send (Ctrl+Enter)" disabled>
+										<button class="send-button" id="sendButton" type="button" title="Send (Ctrl+Enter)" aria-label="Send (Ctrl+Enter)" disabled>
 											<svg class="icon"><use href="#i-send" /></svg>
 										</button>
-										<button class="stop-button" id="stopButton" type="button" data-i18n-title="composer.stop" data-i18n-aria-label="composer.stop" title="Stop (Esc)" aria-label="Stop (Esc)" hidden>
+										<button class="stop-button" id="stopButton" type="button" title="Stop (Esc)" aria-label="Stop (Esc)" hidden>
 											<svg class="icon"><use href="#i-stop" /></svg>
 										</button>
 									</div>
@@ -158,13 +169,13 @@
 					</footer>
 				</section>
 
-				<div class="plan-resizer" id="planResizer" role="separator" tabindex="0" aria-orientation="vertical" data-i18n-aria-label="plan.resize" aria-label="Plan panel width" aria-valuemin="220" aria-valuemax="640" aria-valuenow="284"></div>
+				<div class="plan-resizer" id="planResizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Plan panel width" aria-valuemin="220" aria-valuemax="640" aria-valuenow="284"></div>
 
-				<aside class="plan-panel" id="planPanel" data-i18n-aria-label="plan.panelLabel" aria-label="Plan">
+				<aside class="plan-panel" id="planPanel" aria-label="Plan">
 					<div class="plan-head">
 						<svg class="icon" aria-hidden="true"><use href="#i-plan" /></svg>
-						<span class="plan-title" id="planTitle" data-i18n="plan.title">Plan</span>
-						<button class="ghost-icon plan-close" id="planClose" type="button" data-i18n-aria-label="plan.close" aria-label="Close">
+						<span class="plan-title" id="planTitle">Plan</span>
+						<button class="ghost-icon plan-close" id="planClose" type="button" aria-label="Close">
 							<svg class="icon"><use href="#i-x" /></svg>
 						</button>
 					</div>
@@ -182,23 +193,23 @@
 
 			<div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
 			<div class="drawer-backdrop" id="planBackdrop" hidden></div>
-			<aside class="drawer" id="historyPanel" data-i18n-aria-label="nav.history" aria-label="History" hidden>
+			<aside class="drawer" id="historyPanel" aria-label="History" hidden>
 				<div class="drawer-head">
 					<svg class="icon" aria-hidden="true"><use href="#i-history" /></svg>
 					<span class="drawer-grow" aria-hidden="true"></span>
-					<button class="select-toggle" id="historySelect" type="button" aria-pressed="false" data-i18n="history.select">Select</button>
-					<button class="ghost-icon" id="newChatButton" type="button" data-i18n-title="history.new" data-i18n-aria-label="history.new" title="New chat" aria-label="New chat">
+					<button class="select-toggle" id="historySelect" type="button" aria-pressed="false">Select</button>
+					<button class="ghost-icon" id="newChatButton" type="button" title="New chat" aria-label="New chat">
 						<svg class="icon"><use href="#i-plus" /></svg>
 					</button>
-					<button class="ghost-icon" id="historyClose" type="button" data-i18n-aria-label="plan.close" aria-label="Close">
+					<button class="ghost-icon" id="historyClose" type="button" aria-label="Close">
 						<svg class="icon"><use href="#i-x" /></svg>
 					</button>
 				</div>
 				<div class="selection-bar" id="historyActions" hidden>
-					<button class="text-btn" id="historySelectAll" type="button" data-i18n="history.selectAll">Select all</button>
+					<button class="text-btn" id="historySelectAll" type="button">Select all</button>
 					<span class="selection-count" id="historyCount"></span>
-					<button class="danger-btn" id="historyDelete" type="button" data-i18n="history.delete" disabled>Delete</button>
-					<button class="text-btn" id="historyCancel" type="button" data-i18n="history.cancel">Cancel</button>
+					<button class="danger-btn" id="historyDelete" type="button" disabled>Delete</button>
+					<button class="text-btn" id="historyCancel" type="button">Cancel</button>
 				</div>
 				<div class="session-list" id="sessionList"></div>
 			</aside>

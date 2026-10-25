@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const REQUIRED = ["bin/pi-tinychat.js", "src/server.js", "public/index.html", "public/i18n.js", "extension/dock-plan.ts"];
+const REQUIRED = ["bin/pi-tinychat.js", "src/server.js", "public/index.html", "public/favicon.svg", "public/i18n.js", "extension/dock-plan.ts"];
 const FORBIDDEN = ["docs/", "scripts/", "test/", "tmp/", "AGENTS.md", "src/pi-protocol.d.ts"];
 
 await mkdir(join(ROOT, "tmp"), { recursive: true });

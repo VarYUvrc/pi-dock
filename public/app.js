@@ -1,4 +1,4 @@
-import { LANGUAGES, getLanguage, normalizeLanguage, setLanguage, t, applyStaticTranslations } from "./i18n.js";
+import { LANGUAGES, getLanguage, normalizeLanguage, setLanguage, t } from "./i18n.js";
 import { escapeHtml, renderMarkdown } from "./markdown.js";
 
 const TOKEN = new URLSearchParams(location.search).get("token") ?? "";
@@ -205,7 +205,6 @@ function applyTheme() {
 
 function applyLanguage() {
 	setLanguage(settings.language ?? undefined);
-	applyStaticTranslations();
 	renderChrome();
 	renderMessages(true);
 	renderPlan();
@@ -858,7 +857,7 @@ function closeLocalDialog() {
 	renderDialog();
 }
 
-function showConfirm({ title, message, confirmLabel = t("common.ok"), danger = false, onConfirm }) {
+function showConfirm({ title, message, confirmLabel = "OK", danger = false, onConfirm }) {
 	state.localDialog = { title, message, confirmLabel, danger, onConfirm };
 	renderDialog();
 }
@@ -867,7 +866,7 @@ function renderLocalDialog(dialog) {
 	dom.dialogLayer.hidden = false;
 	const parts = [];
 	const h2 = document.createElement("h2");
-	h2.textContent = dialog.title || t("common.confirm");
+	h2.textContent = dialog.title || "Confirm";
 	parts.push(h2);
 	const p = document.createElement("p");
 	p.textContent = dialog.message ?? "";
@@ -875,7 +874,7 @@ function renderLocalDialog(dialog) {
 	const actions = document.createElement("div");
 	actions.className = "dialog-actions";
 	actions.append(
-		button(t("common.cancel"), "btn", closeLocalDialog),
+		button("Cancel", "btn", closeLocalDialog),
 		button(dialog.confirmLabel, `btn ${dialog.danger ? "danger" : "primary"}`, async () => {
 			const action = dialog.onConfirm;
 			closeLocalDialog();
@@ -906,7 +905,7 @@ function renderDialog() {
 	dom.dialogLayer.hidden = false;
 	const parts = [];
 	const h2 = document.createElement("h2");
-	h2.textContent = request.title || t("common.confirm");
+	h2.textContent = request.title || "Confirm";
 	parts.push(h2);
 
 	if (request.method === "confirm") {
@@ -916,8 +915,8 @@ function renderDialog() {
 		const actions = document.createElement("div");
 		actions.className = "dialog-actions";
 		actions.append(
-			button(t("common.cancel"), "btn", () => respondDialog(request, { confirmed: false })),
-			button(t("common.yes"), "btn primary", () => respondDialog(request, { confirmed: true })),
+			button("Cancel", "btn", () => respondDialog(request, { confirmed: false })),
+			button("Yes", "btn primary", () => respondDialog(request, { confirmed: true })),
 		);
 		parts.push(actions);
 	} else if (request.method === "select") {
@@ -929,7 +928,7 @@ function renderDialog() {
 		}
 		parts.push(list);
 		parts.push(
-			button(t("common.cancel"), "btn", () => respondDialog(request, { cancelled: true }), "dialog-cancel"),
+			button("Cancel", "btn", () => respondDialog(request, { cancelled: true }), "dialog-cancel"),
 		);
 	} else if (request.method === "input") {
 		const input = document.createElement("input");
@@ -1009,8 +1008,8 @@ function dialogActions(onCancel, onConfirm) {
 	const actions = document.createElement("div");
 	actions.className = "dialog-actions";
 	actions.append(
-		button(t("common.cancel"), "btn", onCancel),
-		button(t("common.ok"), "btn primary", onConfirm),
+		button("Cancel", "btn", onCancel),
+		button("OK", "btn primary", onConfirm),
 	);
 	return actions;
 }
@@ -1327,7 +1326,7 @@ function renderAttachments() {
 			remove.className = "attachment-remove";
 			remove.dataset.id = attachment.id;
 			remove.dataset.testid = "attachment-remove";
-			remove.setAttribute("aria-label", t("image.remove"));
+			remove.setAttribute("aria-label", "Remove image");
 			remove.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>';
 			item.append(image, remove);
 			return item;
@@ -1605,19 +1604,19 @@ function initPlanResizer() {
 const DOCK_COMMANDS = [
 	{
 		name: "new",
-		description: t("cmd.new"),
+		description: "Start a new chat",
 		source: "dock",
 		run: newChat,
 	},
 	{
 		name: "resume",
-		description: t("cmd.resume"),
+		description: "Resume a chat from history",
 		source: "dock",
 		run: openHistory,
 	},
 	{
 		name: "compact",
-		description: t("cmd.compact"),
+		description: "Compact the context",
 		source: "dock",
 		run: async () => {
 			await compactContext();
@@ -1625,31 +1624,31 @@ const DOCK_COMMANDS = [
 	},
 	{
 		name: "model",
-		description: t("cmd.model"),
+		description: "Choose a model",
 		source: "dock",
 		run: () => openMenu("model"),
 	},
 	{
 		name: "thinking",
-		description: t("cmd.thinking"),
+		description: "Change reasoning effort",
 		source: "dock",
 		run: () => openMenu("thinking"),
 	},
 	{
 		name: "settings",
-		description: t("cmd.settings"),
+		description: "Open settings",
 		source: "dock",
 		run: () => openMenu("settings"),
 	},
 	{
 		name: "session",
-		description: t("cmd.session"),
+		description: "Show session usage",
 		source: "dock",
 		run: () => openMenu("context"),
 	},
 	{
 		name: "copy",
-		description: t("cmd.copy"),
+		description: "Copy the last response",
 		source: "dock",
 		run: async () => {
 			const text = lastAssistantText();
@@ -1660,7 +1659,7 @@ const DOCK_COMMANDS = [
 	},
 	{
 		name: "export",
-		description: t("cmd.export"),
+		description: "Export the session as HTML",
 		source: "dock",
 		run: async () => {
 			const result = await api({ type: "export_html" });
@@ -1669,7 +1668,7 @@ const DOCK_COMMANDS = [
 	},
 	{
 		name: "name",
-		description: t("cmd.name"),
+		description: "Set the session name",
 		source: "dock",
 		argument: true,
 		run: async (args) => {
@@ -1681,7 +1680,7 @@ const DOCK_COMMANDS = [
 	},
 	{
 		name: "reload",
-		description: t("cmd.reload"),
+		description: "Restart Pi and reload settings",
 		source: "dock",
 		run: async () => {
 			if (state.running) throw new Error(t("cmd.reloadRunning"));
@@ -1788,15 +1787,15 @@ function chooseSlash(command) {
 }
 
 function commandSourceLabel(source) {
-	if (source === "dock") return t("command.source.builtin");
-	if (source === "skill") return t("command.source.skill");
-	if (source === "extension") return t("command.source.extension");
-	if (source === "prompt" || source === "template") return t("command.source.prompt");
-	return t("command.source.command");
+	if (source === "dock") return "Built-in";
+	if (source === "skill") return "Skill";
+	if (source === "extension") return "Extension";
+	if (source === "prompt" || source === "template") return "Prompt";
+	return "Command";
 }
 
 function commandSourceIcon(source) {
-	if (source === "dock") return "i-dock";
+	if (source === "dock") return "i-tinychat";
 	if (source === "skill") return "i-spark";
 	if (source === "extension") return "i-extension";
 	return "i-prompt";
@@ -1822,7 +1821,7 @@ function openCommandMenu() {
 	closeMenus();
 	closeSlash();
 	state.commandMenu = { query: "", index: 0, items: [] };
-	dom.commandMenu.innerHTML = `<div class="menu-search"><input type="text" placeholder="${escapeHtml(t("command.search"))}" autocomplete="off" spellcheck="false" data-role="command-search" aria-label="${escapeHtml(t("command.search"))}" /></div><div class="command-list" data-role="command-list" role="listbox" aria-label="${escapeHtml(t("command.label"))}"></div>`;
+	dom.commandMenu.innerHTML = `<div class="menu-search"><input type="text" placeholder="Search commands" autocomplete="off" spellcheck="false" data-role="command-search" aria-label="Search commands" /></div><div class="command-list" data-role="command-list" role="listbox" aria-label="Commands"></div>`;
 	dom.commandMenu.hidden = false;
 	dom.commandButton.setAttribute("aria-expanded", "true");
 	renderCommandMenu();
@@ -1853,7 +1852,7 @@ function renderCommandMenu() {
 	const list = dom.commandMenu.querySelector('[data-role="command-list"]');
 	if (!list) return;
 	if (!menu.items.length) {
-		list.innerHTML = `<div class="menu-empty">${escapeHtml(t("common.notFound"))}</div>`;
+		list.innerHTML = `<div class="menu-empty">Not found</div>`;
 		return;
 	}
 	list.innerHTML = menu.items
@@ -2052,7 +2051,7 @@ function renderModelMenu() {
 	search.className = "menu-search";
 	const input = document.createElement("input");
 	input.type = "text";
-	input.placeholder = t("model.search");
+	input.placeholder = "Model";
 	input.autocomplete = "off";
 	input.addEventListener("input", () => renderModelList(input.value));
 	search.append(input);
@@ -2078,7 +2077,7 @@ function renderModelList(filter) {
 	if (!models.length) {
 		const empty = document.createElement("div");
 		empty.className = "menu-empty";
-		empty.textContent = t("common.notFound");
+		empty.textContent = "Not found";
 		list.replaceChildren(empty);
 		return;
 	}
@@ -2122,9 +2121,9 @@ function renderThinkingMenu() {
 
 function renderSettingsMenu() {
 	const themeOptions = [
-		["system", "i-monitor", t("settings.theme.system")],
-		["light", "i-sun", t("settings.theme.light")],
-		["dark", "i-moon", t("settings.theme.dark")],
+		["system", "i-monitor", "System"],
+		["light", "i-sun", "Light"],
+		["dark", "i-moon", "Dark"],
 	]
 		.map(
 			([value, icon, label]) =>
@@ -2136,20 +2135,20 @@ function renderSettingsMenu() {
 			`<option value="${entry.value}"${getLanguage() === entry.value ? " selected" : ""}>${entry.label}</option>`,
 	).join("");
 	dom.settingsMenu.innerHTML = `<div class="setting-row">
-		<span>${t("settings.theme")}</span>
-		<div class="segmented" role="group" aria-label="${t("settings.theme")}">${themeOptions}</div>
+		<span>Theme</span>
+		<div class="segmented" role="group" aria-label="Theme">${themeOptions}</div>
 	</div>
 	<div class="setting-row">
-		<span>${t("settings.language")}</span>
-		<select class="select" data-language-select data-testid="language-select" aria-label="${t("settings.language")}">${languageOptions}</select>
+		<span>Language</span>
+		<select class="select" data-language-select data-testid="language-select" aria-label="Language">${languageOptions}</select>
 	</div>
 	<div class="setting-row">
-		<span>${t("settings.ctrlEnter")}</span>
-		<button type="button" class="switch" role="switch" aria-checked="${settings.ctrlEnterSend}" aria-label="${t("settings.ctrlEnter")}" data-setting="ctrlEnterSend" data-testid="ctrl-enter-toggle"></button>
+		<span>Send with Ctrl+Enter</span>
+		<button type="button" class="switch" role="switch" aria-checked="${settings.ctrlEnterSend}" aria-label="Send with Ctrl+Enter" data-setting="ctrlEnterSend" data-testid="ctrl-enter-toggle"></button>
 	</div>
 	<div class="setting-row">
-		<span>${t("settings.plan")}</span>
-		<button type="button" class="switch" role="switch" aria-checked="${settings.plan}" aria-label="${t("settings.plan")}" data-setting="plan" data-testid="plan-setting-toggle"></button>
+		<span>Plan</span>
+		<button type="button" class="switch" role="switch" aria-checked="${settings.plan}" aria-label="Plan" data-setting="plan" data-testid="plan-setting-toggle"></button>
 	</div>`;
 }
 
@@ -2165,31 +2164,29 @@ function renderContextMenu() {
 	const thresholdPercent = Number.isFinite(compaction?.thresholdPercent)
 		? Math.round(compaction.thresholdPercent)
 		: null;
+	const thresholdIsDefault = compaction?.reserveSource !== "settings";
 	const thresholdTokens = Number.isFinite(compaction?.thresholdTokens)
 		? Math.round(compaction.thresholdTokens)
 		: null;
 	const usedTokens = tokens ?? 0;
 	const rows = [
-		[t("context.title"), percent === null ? "—" : `${percent}%`],
+		["Context", percent === null ? "—" : `${percent}%`],
 		[
-			t("context.tokens"),
+			"Tokens",
 			tokens === null
 				? "—"
 				: `${tokens.toLocaleString()}${windowSize ? ` / ${windowSize.toLocaleString()}` : ""}`,
 		],
-		[t("context.messages"), String(state.stats?.totalMessages ?? state.messages.length)],
+		["Messages", String(state.stats?.totalMessages ?? state.messages.length)],
 	];
-	if (cost) rows.push([t("context.cost"), `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`]);
-	const pressed = (value) => thresholdPercent !== null && thresholdPercent === value;
-	const custom =
-		thresholdPercent !== null && ![25, 50, 75].includes(thresholdPercent)
-			? `<button type="button" data-compaction-percent="${thresholdPercent}" aria-pressed="true">${thresholdPercent}%</button>`
-			: "";
+	if (cost) rows.push(["Cost", `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`]);
+	const pressed = (value) =>
+		!thresholdIsDefault && thresholdPercent !== null && thresholdPercent === value;
 	const preset = (value) =>
 		`<button type="button" data-compaction-percent="${value}" aria-pressed="${pressed(value)}" data-testid="compaction-${value}"${contextWindowKnown ? "" : " disabled"}>${value}%</button>`;
 	const unknown = contextWindowKnown
 		? ""
-		: `<div class="compaction-note" data-testid="compaction-unknown">${t("context.unknown")}</div>`;
+		: `<div class="compaction-note" data-testid="compaction-unknown">The context length is unknown for the current model</div>`;
 	dom.contextMenu.innerHTML =
 		rows
 			.map(
@@ -2198,13 +2195,12 @@ function renderContextMenu() {
 			)
 			.join("") +
 		`<div class="setting-row compaction-row">
-			<span>${t("context.autoCompaction")}</span>
-			<div class="compaction-actions" role="group" aria-label="${t("context.thresholdAria")}">
-				${custom}
+			<span>Auto-compaction</span>
+			<div class="compaction-actions" role="group" aria-label="Auto-compaction threshold">
 				${preset(25)}
 				${preset(50)}
 				${preset(75)}
-				<button type="button" data-compaction-clear data-testid="compaction-default"${contextWindowKnown ? "" : " disabled"}>${t("context.default")}</button>
+				<button type="button" data-compaction-clear data-testid="compaction-default" aria-pressed="${thresholdIsDefault}"${contextWindowKnown ? "" : " disabled"}>Pi default</button>
 			</div>
 		</div>
 		${unknown}
@@ -2212,9 +2208,9 @@ function renderContextMenu() {
 		(state.running || state.compacting || state.compactingRequest
 			? ""
 			: `<div class="setting-row compaction-row">
-				<span>${t("context.manual")}</span>
+				<span>Manual compaction</span>
 				<div class="compaction-actions">
-					<button type="button" data-action="compact" data-testid="compact-button" title="${t("context.compactTitle")}">${t("context.run")}</button>
+					<button type="button" data-action="compact" data-testid="compact-button" title="Compact the context">Run</button>
 				</div>
 			</div>`);
 }
@@ -2239,11 +2235,7 @@ function compactionMeterMarkup(usedTokens, thresholdTokens) {
 	const fill = Math.max(0, Math.min(100, ratio * 100));
 	const percent = Math.max(0, Math.round(ratio * 100));
 	const short = `${formatTokenCount(usedTokens)} / ${formatTokenCount(thresholdTokens)} (${percent}%)`;
-	const full = t("context.meter", {
-		used: usedTokens.toLocaleString(),
-		threshold: thresholdTokens.toLocaleString(),
-		percent,
-	});
+	const full = `${usedTokens.toLocaleString()} / ${thresholdTokens.toLocaleString()} tokens (${percent}%)`;
 	return `<div class="compaction-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(
 		100,
 		percent,
@@ -2452,12 +2444,12 @@ function updateHistoryActions() {
 	dom.historyActions.hidden = !selecting;
 	if (!selecting) return;
 	const count = state.historySelection.size;
-	dom.historyCount.textContent = t("history.count", { count });
+	dom.historyCount.textContent = `${count} items`;
 	dom.historyDelete.disabled = count === 0;
 	const eligible = eligibleSessions();
 	const allSelected =
 		eligible.length > 0 && eligible.every((session) => state.historySelection.has(session.id));
-	dom.historySelectAll.textContent = allSelected ? t("history.deselectAll") : t("history.selectAll");
+	dom.historySelectAll.textContent = allSelected ? "Deselect all" : "Select all";
 }
 
 function openHistory() {
@@ -2486,7 +2478,7 @@ function closeHistory() {
 function renderSessionList() {
 	dom.sessionList.dataset.total = String(state.sessionTotal || state.sessions.length);
 	if (!state.sessions.length) {
-		dom.sessionList.innerHTML = `<div class="session-empty">${escapeHtml(t("history.empty"))}</div>`;
+		dom.sessionList.innerHTML = `<div class="session-empty">No history</div>`;
 		updateHistoryActions();
 		return;
 	}
@@ -2507,7 +2499,7 @@ function renderSessionList() {
 				: "";
 		const trash =
 			!selecting && selectable
-				? `<button type="button" class="session-trash" data-delete-index="${index}" title="${t("history.delete")}" aria-label="${t("history.delete")}" data-testid="session-delete">
+				? `<button type="button" class="session-trash" data-delete-index="${index}" title="Delete" aria-label="Delete" data-testid="session-delete">
 						<svg class="icon"><use href="#i-trash"/></svg>
 					</button>`
 				: "";
@@ -2523,7 +2515,7 @@ function renderSessionList() {
 			<div class="session-main" data-index="${index}"${interaction}>
 				<span class="s-top"><span class="s-title">${escapeHtml(name)}</span>${
 					session.running
-						? `<span class="s-run" title="${t("history.running")}" aria-label="${t("history.running")}"></span>`
+						? `<span class="s-run" title="Running" aria-label="Running"></span>`
 						: ""
 				}<span class="s-time">${escapeHtml(relativeTime(session.modified))}</span></span>
 				${preview ? `<span class="s-preview">${escapeHtml(preview)}</span>` : ""}
@@ -2534,7 +2526,7 @@ function renderSessionList() {
 	const remaining = state.sessions.length - visible.length;
 	if (remaining > 0) {
 		items.push(
-			`<button type="button" class="session-more" data-role="session-more" data-testid="session-more">${t("history.more", { count: remaining })}</button>`,
+			`<button type="button" class="session-more" data-role="session-more" data-testid="session-more">Show more (${remaining} remaining)</button>`,
 		);
 	}
 	dom.sessionList.innerHTML = items.join("");
@@ -2545,9 +2537,9 @@ function relativeTime(iso) {
 	const time = new Date(iso).getTime();
 	if (!Number.isFinite(time)) return "";
 	const seconds = Math.max(0, (Date.now() - time) / 1000);
-	if (seconds < 60) return t("time.now");
-	if (seconds < 3600) return t("time.minutes", { count: Math.floor(seconds / 60) });
-	if (seconds < 86_400) return t("time.hours", { count: Math.floor(seconds / 3600) });
+	if (seconds < 60) return "just now";
+	if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+	if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`;
 	const date = new Date(time);
 	const month = date.getMonth() + 1;
 	const day = date.getDate();
@@ -2742,7 +2734,7 @@ function renderPlan() {
 	dom.planPanel.classList.toggle("has-plan", hasPlan);
 	dom.planEmpty.hidden = hasPlan;
 	dom.planItems.hidden = !hasPlan;
-	dom.planTitle.textContent = hasPlan ? plan.title || t("plan.title") : t("plan.title");
+	dom.planTitle.textContent = hasPlan ? plan.title || "Plan" : "Plan";
 	if (!hasPlan) {
 		previousPlanStatuses = new Map();
 		dom.planItems.replaceChildren();
@@ -2861,10 +2853,10 @@ function renderMessage(message, index, ctx) {
 		);
 	}
 	if (message.role === "compactionSummary") {
-		return renderSummaryNote(message.summary, t("summary.compaction"), index);
+		return renderSummaryNote(message.summary, "Compaction", index);
 	}
 	if (message.role === "branchSummary") {
-		return renderSummaryNote(message.summary, t("summary.branch"), index);
+		return renderSummaryNote(message.summary, "Branch", index);
 	}
 	if (message.role === "custom") {
 		const note = document.createElement("div");
@@ -2910,11 +2902,11 @@ function renderAssistant(message, index, ctx, live) {
 	const blocks = Array.isArray(message.content) ? message.content : [];
 	node.innerHTML = renderBlocks(blocks, `m${index}`, ctx, { live });
 	if (message.stopReason === "aborted") {
-		node.append(note(t("message.aborted")));
+		node.append(note("Stopped"));
 	} else if (message.stopReason === "error") {
-		node.append(note(message.errorMessage || t("message.error"), true));
+		node.append(note(message.errorMessage || "An error occurred", true));
 	} else if (message.stopReason === "length") {
-		node.append(note(t("message.length")));
+		node.append(note("The output limit was reached"));
 	}
 	return node;
 }
@@ -3039,15 +3031,15 @@ function workHeading(items, status) {
 		const shown = names.slice(0, 3);
 		const rest = names.length - shown.length;
 		return {
-			text: `${shown.join(t("work.separator"))}${rest ? t("work.other", { count: rest }) : ""}`,
-			title: names.join(t("work.separator")),
+			text: `${shown.join(" · ")}${rest ? ` +${rest} more` : ""}`,
+			title: names.join(" · "),
 		};
 	}
 
 	if (items.some((item) => item.kind === "thinking")) {
-		return { text: t("work.thinking"), title: t("work.thinking") };
+		return { text: "Thinking", title: "Thinking" };
 	}
-	const fallback = { running: t("work.running"), error: t("work.error"), done: t("work.done") }[status] ?? t("work.done");
+	const fallback = { running: "Running", error: "Error", done: "Done" }[status] ?? "Done";
 	return { text: fallback, title: fallback };
 }
 
@@ -3067,17 +3059,17 @@ function toolKind(name) {
 }
 
 const TOOL_KIND_LABELS = {
-	read: () => t("tool.kind.read"),
-	edit: () => t("tool.kind.edit"),
-	write: () => t("tool.kind.write"),
-	command: () => t("tool.kind.command"),
-	web: () => t("tool.kind.web"),
-	search: () => t("tool.kind.search"),
-	list: () => t("tool.kind.list"),
-	image: () => t("tool.kind.image"),
-	plan: () => t("tool.kind.plan"),
-	agent: () => t("tool.kind.agent"),
-	tool: () => t("tool.kind.tool"),
+	read: "Read",
+	edit: "Edit",
+	write: "Write",
+	command: "Command",
+	web: "Web",
+	search: "Search",
+	list: "List",
+	image: "Image",
+	plan: "Plan",
+	agent: "Agent",
+	tool: "Tool",
 };
 
 function workToolKinds(items) {
@@ -3105,7 +3097,7 @@ function workMarkup(items, key, prefix) {
 	const kinds = workToolKinds(items);
 	const tools = kinds.length
 		? `<span class="work-tools" title="${escapeHtml(
-				kinds.map((kind) => TOOL_KIND_LABELS[kind]?.() ?? kind).join(t("work.separator")),
+				kinds.map((kind) => TOOL_KIND_LABELS[kind] ?? kind).join(" · "),
 			)}" aria-hidden="true">${kinds
 				.map((kind) => `<svg class="icon"><use href="#i-${kind}"/></svg>`)
 				.join("")}</span>`
@@ -3114,7 +3106,7 @@ function workMarkup(items, key, prefix) {
 		.map((item) => {
 			if (item.kind === "thinking") {
 				return `<div class="work-thinking">
-					<div class="work-item-head"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg><span>${t("work.thinking")}</span></div>
+					<div class="work-item-head"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg><span>Thinking</span></div>
 					<div class="thinking-text">${escapeHtml(item.text)}</div>
 				</div>`;
 			}
@@ -3205,8 +3197,8 @@ function toolCardMarkup(tool, prefix, testId = "tool") {
 			${meta ? `<span class="tool-meta">${escapeHtml(meta)}</span>` : ""}
 		</summary>
 		<div class="tool-body">
-			${argsText ? `<div class="tool-args"><span>${t("tool.args")}</span><pre>${escapeHtml(argsText)}</pre></div>` : ""}
-			${clipped ? `<pre>${escapeHtml(clipped)}</pre>` : `<div class="note">${t("tool.noOutput")}</div>`}
+			${argsText ? `<div class="tool-args"><span>Arguments</span><pre>${escapeHtml(argsText)}</pre></div>` : ""}
+			${clipped ? `<pre>${escapeHtml(clipped)}</pre>` : `<div class="note">No output</div>`}
 		</div>
 	</details>`;
 }
@@ -3331,9 +3323,9 @@ function renderRunStatus() {
 		return;
 	}
 	const text = state.compacting
-		? t("context.compacting")
+		? "Compacting context"
 		: state.retry
-			? t("run.retry", { attempt: state.retry.attempt, max: state.retry.maxAttempts })
+			? `Retry ${state.retry.attempt}/${state.retry.maxAttempts}`
 			: "";
 	const diff = state.diff;
 	dom.runStatus.innerHTML = `<span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>${
@@ -3358,14 +3350,14 @@ function renderChrome() {
 	dom.projectName.title = state.cwd;
 	dom.sessionName.textContent = state.sessionName;
 	dom.sessionName.title = state.sessionName;
-	dom.modelLabel.textContent = state.model?.name ?? t("chrome.model");
-	dom.modelButton.title = state.model ? `${state.model.provider}/${state.model.id}` : t("chrome.model");
+	dom.modelLabel.textContent = state.model?.name ?? "Model";
+	dom.modelButton.title = state.model ? `${state.model.provider}/${state.model.id}` : "Model";
 	dom.thinkingLabel.textContent = state.thinkingLevel;
 	const effortEditable = (state.levels ?? []).length > 1;
 	dom.thinkingButton.disabled = !effortEditable;
 	dom.thinkingButton.title = effortEditable
-		? t("chrome.thinking", { level: state.thinkingLevel })
-		: t("chrome.thinkingFixed", { level: state.thinkingLevel });
+		? `Reasoning effort: ${state.thinkingLevel}`
+		: `Reasoning effort: ${state.thinkingLevel} (not available for this model)`;
 
 	const usage = state.contextUsage;
 	const known =
@@ -3401,24 +3393,17 @@ function renderChrome() {
 	const title = [];
 	if (known) {
 		title.push(
-			t("context.titlePercent", {
-				percent: Math.round(percent),
-				tokens: (usage.tokens ?? 0).toLocaleString(),
-				window: (usage.contextWindow ?? 0).toLocaleString(),
-			}),
+			`Context ${Math.round(percent)}% (${(usage.tokens ?? 0).toLocaleString()} / ${(usage.contextWindow ?? 0).toLocaleString()})`,
 		);
 	} else {
-		title.push(t("context.title"));
+		title.push("Context");
 	}
 	if (limit !== null) {
 		title.push(
-			t("context.autoTitle", {
-				percent: Math.round(limit),
-				tokens: Math.round(state.compaction.thresholdTokens ?? 0).toLocaleString(),
-			}),
+			`Auto-compaction ${Math.round(limit)}% (${Math.round(state.compaction.thresholdTokens ?? 0).toLocaleString()})`,
 		);
 	} else if (state.compaction && !state.compaction.enabled) {
-		title.push(t("context.disabled"));
+		title.push("Auto-compaction disabled");
 	}
 	dom.contextButton.title = title.join(" · ");
 
@@ -3426,7 +3411,7 @@ function renderChrome() {
 	renderSendMode();
 	const queued = state.queue.steering.length + state.queue.followUp.length;
 	dom.queueBadge.hidden = queued === 0;
-	dom.queueBadge.textContent = t("run.queued", { count: queued });
+	dom.queueBadge.textContent = `${queued} queued`;
 
 	const statuses = Object.values(state.statuses).filter(Boolean);
 	dom.composerLeft.replaceChildren(
@@ -3444,8 +3429,8 @@ function renderChrome() {
 	document.title = state.extensionTitle
 		? state.extensionTitle
 		: state.sessionName
-			? `${state.sessionName} · ${t("app.name")}`
-			: t("app.name");
+			? `${state.sessionName} · Pi TinyChat`
+			: "Pi TinyChat";
 }
 
 function renderWidgets() {
