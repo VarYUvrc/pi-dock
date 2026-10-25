@@ -1,5 +1,9 @@
-export const PLAN_TOOL = "dock_plan";
-export const PLAN_STATE_ENTRY = "dock_plan_state";
+export const PLAN_TOOL = "tiny_plan";
+export const PLAN_STATE_ENTRY = "tiny_plan_state";
+
+// Plans saved by the pre-rename Pi Dock build remain readable.
+const LEGACY_PLAN_TOOL = "dock_plan";
+const LEGACY_PLAN_STATE_ENTRY = "dock_plan_state";
 
 /** @typedef {import("./pi-types.js").PiSessionEntry} PiSessionEntry */
 /** @typedef {"pending" | "in_progress" | "done" | "cancelled"} PlanItemStatus */
@@ -10,7 +14,7 @@ export const PLAN_STATE_ENTRY = "dock_plan_state";
 const STATUSES = new Set(["pending", "in_progress", "done", "cancelled"]);
 
 /**
- * Normalise the `details` payload of a dock_plan tool result.
+ * Normalise the `details` payload of a tiny_plan tool result.
  * Returns null when details is not a plan; a cleared plan is an empty item list.
  * @param {unknown} details
  * @returns {Plan | null}
@@ -37,12 +41,20 @@ export function normalizePlan(details) {
 /** @param {PiSessionEntry} entry */
 function planFromEntry(entry) {
 	if (!entry || typeof entry !== "object") return null;
-	if (entry.type === "custom" && entry.customType === PLAN_STATE_ENTRY) {
+	if (
+		entry.type === "custom" &&
+		(entry.customType === PLAN_STATE_ENTRY || entry.customType === LEGACY_PLAN_STATE_ENTRY)
+	) {
 		return normalizePlan(entry.data);
 	}
 	if (entry.type !== "message") return null;
 	const message = entry.message;
-	if (message?.role !== "toolResult" || message.toolName !== PLAN_TOOL) return null;
+	if (
+		message?.role !== "toolResult" ||
+		(message.toolName !== PLAN_TOOL && message.toolName !== LEGACY_PLAN_TOOL)
+	) {
+		return null;
+	}
 	return normalizePlan(message.details);
 }
 

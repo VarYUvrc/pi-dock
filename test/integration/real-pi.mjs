@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Starts Dock against the Pi version installed as a devDependency, with an
+// Starts Pi TinyChat against the Pi version installed as a devDependency, with an
 // isolated agent directory and no model/network access. This catches RPC,
 // session JSONL, and extension-loading drift that the fake fixture cannot.
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createDock } from "../../src/server.js";
+import { createTinyChat } from "../../src/server.js";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const PI_CLI = join(
@@ -27,10 +27,10 @@ await mkdir(agent, { recursive: true });
 await mkdir(project, { recursive: true });
 
 const env = { ...process.env, PI_CODING_AGENT_DIR: agent, PI_OFFLINE: "1" };
-let dock;
+let app;
 let token;
 const call = async (command) => {
-	const response = await fetch(`http://127.0.0.1:${dock.port}/api/rpc`, {
+	const response = await fetch(`http://127.0.0.1:${app.port}/api/rpc`, {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
@@ -44,15 +44,15 @@ const call = async (command) => {
 };
 
 try {
-	dock = await createDock({
+	app = await createTinyChat({
 		cwd: project,
 		launcher: { command: process.execPath, args: [PI_CLI] },
 		env,
 		port: 0,
 	});
-	token = new URL(dock.url).searchParams.get("launch");
+	token = new URL(app.url).searchParams.get("launch");
 
-	const snapshot = await call({ type: "dock:snapshot" });
+	const snapshot = await call({ type: "tinychat:snapshot" });
 	assert.equal(snapshot.cwd, project);
 	assert.ok(snapshot.state?.sessionId, "Pi did not return a session id");
 	assert.ok(snapshot.state?.sessionFile, "Pi did not create a session file");
@@ -73,7 +73,7 @@ try {
 	assert.ok(next.sessionId && next.sessionId !== initialId);
 	assert.ok(next.sessionFile && next.sessionFile !== initialPath);
 
-	const sessions = await call({ type: "dock:sessions" });
+	const sessions = await call({ type: "tinychat:sessions" });
 	assert.ok(sessions.total >= 2, `expected at least two sessions, got ${sessions.total}`);
 	const target = sessions.sessions.find((session) => session.id === initialId);
 	assert.ok(target?.path, "the initial session is missing from history");
@@ -83,13 +83,13 @@ try {
 	const resumed = await call({ type: "get_state" });
 	assert.equal(resumed.sessionId, initialId);
 
-	// The dock_plan extension is passed with --extension; reaching this point
+	// The tiny_plan extension is passed with --extension; reaching this point
 	// means Pi loaded it without exiting.
 	const planEntry = await call({ type: "get_entries" });
 	assert.ok(Array.isArray(planEntry.entries));
 
 	process.stdout.write("real Pi integration ok\n");
 } finally {
-	await dock?.close().catch(() => {});
+	await app?.close().catch(() => {});
 	await rm(root, { recursive: true, force: true });
 }

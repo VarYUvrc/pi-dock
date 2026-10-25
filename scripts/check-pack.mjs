@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const REQUIRED = ["bin/pi-tinychat.js", "src/server.js", "public/index.html", "public/favicon.svg", "public/i18n.js", "extension/dock-plan.ts"];
+const REQUIRED = [
+	"bin/pi-tinychat.js",
+	"src/server.js",
+	"public/index.html",
+	"public/favicon.svg",
+	"public/i18n.js",
+	"extension/plan.ts",
+];
 const FORBIDDEN = ["docs/", "scripts/", "test/", "tmp/", "AGENTS.md", "src/pi-protocol.d.ts"];
 
 await mkdir(join(ROOT, "tmp"), { recursive: true });
@@ -43,9 +50,13 @@ try {
 		throw new Error(`--help failed: ${help.stderr || help.stdout}`);
 	}
 	const pkg = JSON.parse(await readFile(join(extracted, "package.json"), "utf8"));
-	if (pkg.name !== "pi-tinychat" || pkg.private !== true) throw new Error("bad package metadata");
+	if (pkg.name !== "pi-tinychat") throw new Error("bad package name");
+	if (pkg.private === true) throw new Error("package must not be private");
+	if (!pkg.keywords?.includes("pi-package")) throw new Error("missing pi-package keyword");
 	if (Object.keys(pkg.dependencies ?? {}).length) throw new Error("runtime dependencies must stay empty");
-	if (pkg.scripts?.postinstall) throw new Error("postinstall is not allowed");
+	if (pkg.scripts?.postinstall || pkg.scripts?.preinstall) {
+		throw new Error("install scripts are not allowed");
+	}
 	console.log(`pack check ok: ${files.length} files, ${Math.round(info.size / 1024)} KiB`);
 } finally {
 	await rm(work, { recursive: true, force: true });

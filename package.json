@@ -1,8 +1,7 @@
 {
 	"name": "pi-tinychat",
 	"version": "0.1.0",
-	"private": true,
-	"description": "Pi TinyChat — Tiny UI. Full Pi. Zero Bloat.",
+	"description": "A tiny local web UI for the Pi coding agent with a live plan panel and context compaction presets.",
 	"type": "module",
 	"bin": {
 		"pi-tinychat": "bin/pi-tinychat.js"
@@ -29,7 +28,9 @@
 		"typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.extension.json",
 		"check:i18n": "node scripts/check-i18n.mjs",
 		"pack:check": "node scripts/check-pack.mjs",
-		"check": "npm run lint && npm run typecheck && npm run check:i18n && npm test && npm run pack:check"
+		"check": "npm run lint && npm run typecheck && npm run check:i18n && npm test && npm run pack:check",
+		"verify": "npm run lint && npm run typecheck && npm run check:i18n && npm run test:pi && npm run pack:check",
+		"prepublishOnly": "npm run verify"
 	},
 	"repository": {
 		"type": "git",
@@ -51,11 +52,17 @@
 	},
 	"keywords": [
 		"pi",
+		"pi-package",
+		"pi-coding-agent",
 		"coding-agent",
 		"web-ui",
 		"local-first",
 		"plan",
+		"compaction",
 		"tinychat"
 	],
-	"license": "MIT"
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
+	}
 }

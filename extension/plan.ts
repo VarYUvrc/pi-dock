@@ -1,5 +1,5 @@
 /**
- * Dock Plan - minimal implementation plan tool for Pi TinyChat.
+ * Plan - minimal implementation plan tool for Pi TinyChat.
  *
  * The plan is stored in Pi's session JSONL twice: a custom entry is appended
  * after every successful mutation so the Web UI can update immediately, and
@@ -14,7 +14,9 @@ import { Type } from "typebox";
 const STATUSES = ["pending", "in_progress", "done", "cancelled"] as const;
 type PlanStatus = (typeof STATUSES)[number];
 
-const PLAN_STATE_ENTRY = "dock_plan_state";
+const PLAN_STATE_ENTRY = "tiny_plan_state";
+const LEGACY_PLAN_STATE_ENTRY = "dock_plan_state";
+const LEGACY_PLAN_TOOL = "dock_plan";
 
 interface PlanItem {
 	id: string;
@@ -109,14 +111,22 @@ export default function (pi: ExtensionAPI) {
 	const reconstruct = (ctx: ExtensionContext) => {
 		plan = { items: [], nextId: 1 };
 		for (const entry of ctx.sessionManager.getBranch()) {
-			if (entry.type === "custom" && entry.customType === PLAN_STATE_ENTRY) {
+			if (
+				entry.type === "custom" &&
+				(entry.customType === PLAN_STATE_ENTRY || entry.customType === LEGACY_PLAN_STATE_ENTRY)
+			) {
 				const restored = planFromDetails(entry.data);
 				if (restored) plan = restored;
 				continue;
 			}
 			if (entry.type !== "message") continue;
 			const message = entry.message;
-			if (message.role !== "toolResult" || message.toolName !== "dock_plan") continue;
+			if (
+				message.role !== "toolResult" ||
+				(message.toolName !== "tiny_plan" && message.toolName !== LEGACY_PLAN_TOOL)
+			) {
+				continue;
+			}
 			const restored = planFromDetails(message.details);
 			if (restored) plan = restored;
 		}
@@ -126,14 +136,14 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_tree", async (_event, ctx) => reconstruct(ctx));
 
 	pi.registerTool({
-		name: "dock_plan",
+		name: "tiny_plan",
 		label: "Plan",
 		description:
 			"Track a multi-step implementation plan. For any task with several distinct steps, call set with the COMPLETE ordered plan in one call before editing files or running commands; include every step through final verification, not only the first step. Then keep it current while working: when a step starts mark it in_progress, and as soon as it finishes mark it done and the next step in_progress. Never leave the first step in_progress during later work and never mark several steps done together at the end. Keep exactly one item in_progress. Use update for one item, add only for a genuinely new step discovered later, remove to delete one, and clear when finished. Reuse item ids. Continue the same plan through follow-up or steering messages. When the previous work is complete and a new independent task begins, call set to replace the old plan. Do not clear the plan just because a new user message arrived.",
 		promptSnippet: "Track a multi-step plan and its progress",
 		promptGuidelines: [
-			"Before editing files for a multi-step task, create the complete ordered plan in one dock_plan set call.",
-			"Update dock_plan immediately when a step starts or finishes; never batch completed steps into the final call.",
+			"Before editing files for a multi-step task, create the complete ordered plan in one tiny_plan set call.",
+			"Update tiny_plan immediately when a step starts or finishes; never batch completed steps into the final call.",
 		],
 		executionMode: "sequential",
 		parameters: PlanParams,

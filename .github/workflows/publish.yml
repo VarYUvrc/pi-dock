@@ -1,0 +1,42 @@
+name: Publish npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# Requires an npm granular access token stored as NPM_TOKEN in the `npm`
+# GitHub environment. Provenance is generated through the OIDC token below.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+      - name: Verify the release tag matches package.json
+        if: github.event_name == 'release'
+        run: |
+          node -e '
+            const version = require("./package.json").version;
+            if (`v${version}` !== process.env.GITHUB_REF_NAME) {
+              console.error(`Tag ${process.env.GITHUB_REF_NAME} does not match v${version}`);
+              process.exit(1);
+            }
+          '
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      # prepublishOnly runs lint, typecheck, i18n, the real-Pi integration test,
+      # and the tarball check before anything is uploaded.
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

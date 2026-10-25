@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { createDock } from "../src/server.js";
+import { createTinyChat } from "../src/server.js";
 import { locatePi } from "../src/pi-path.js";
 
 const HELP = `Pi TinyChat — Tiny UI. Full Pi. Zero Bloat.
@@ -84,21 +84,21 @@ async function main() {
 		throw new Error(`ポート番号が不正です: ${options.port}`);
 	}
 
-	const dock = await createDock({
+	const app = await createTinyChat({
 		cwd,
 		launcher,
 		env,
 		port,
 		piArgs: options.continue ? ["--continue"] : [],
 	});
-	process.stdout.write(`\n  Pi TinyChat  ${dock.url}\n  ${cwd}\n\n`);
-	if (options.open !== false) openBrowser(dock.url);
+	process.stdout.write(`\n  Pi TinyChat  ${app.url}\n  ${cwd}\n\n`);
+	if (options.open !== false) openBrowser(app.url);
 
 	let stopping = false;
 	const shutdown = async () => {
 		if (stopping) return;
 		stopping = true;
-		await dock.close();
+		await app.close();
 		process.exit(0);
 	};
 	process.on("SIGINT", shutdown);

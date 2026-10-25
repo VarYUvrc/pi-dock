@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // E2E fixture that speaks the Pi RPC protocol. It never touches the network or
-// the user's Pi configuration; the dock tests drive this instead of a real model.
+// the user's Pi configuration; the E2E tests drive this instead of a real model.
 import { readFile } from "node:fs/promises";
 
 /** @typedef {import("../../src/pi-types.js").PiRecord} PiRecord */
@@ -51,6 +51,19 @@ const COMMANDS = [
 	},
 ];
 
+const SCREENSHOT_MODE = process.env.FAKE_PI_SCREENSHOT === "1";
+if (SCREENSHOT_MODE) {
+	MODELS.push({
+		id: "deepseek-v4.1-flash",
+		name: "DeepSeek V4.1 Flash",
+		provider: "opencode-go",
+		api: "openai-completions",
+		reasoning: true,
+		contextWindow: 1_000_000,
+	});
+}
+let screenshotTurn = 0;
+
 const SLOW = process.env.FAKE_PI_SPEED === "slow" ? 60 : 12;
 
 const session = {
@@ -72,7 +85,24 @@ const session = {
 	sequence: 0,
 	contextTokens: 1234,
 	contextUnknown: false,
+	cost: 0.001,
 };
+
+const envModel = process.env.FAKE_PI_MODEL;
+if (envModel) {
+	session.model =
+		MODELS.find(
+			(model) => model.id === envModel || `${model.provider}/${model.id}` === envModel,
+		) ?? session.model;
+}
+if (process.env.FAKE_PI_THINKING) session.thinkingLevel = process.env.FAKE_PI_THINKING;
+const envContextTokens = Number(process.env.FAKE_PI_CONTEXT_TOKENS);
+if (Number.isFinite(envContextTokens) && envContextTokens > 0) {
+	session.contextTokens = envContextTokens;
+}
+const envCost = Number(process.env.FAKE_PI_COST);
+if (Number.isFinite(envCost) && envCost >= 0) session.cost = envCost;
+if (process.env.FAKE_PI_SESSION_NAME) session.sessionName = process.env.FAKE_PI_SESSION_NAME;
 
 let buffer = "";
 
@@ -99,7 +129,7 @@ async function openSession(path) {
 	);
 	session.leafId = session.entries.at(-1)?.id ?? null;
 	const planEntry = entries
-		.filter((entry) => entry.type === "custom" && entry.customType === "dock_plan_state")
+		.filter((entry) => entry.type === "custom" && entry.customType === "tiny_plan_state")
 		.at(-1);
 	session.plan = planEntry?.data ?? null;
 	session.messages = entries
@@ -220,7 +250,7 @@ function pushMessage(message) {
 function pushPlanEntry(plan) {
 	const entry = pushEntry({
 		type: "custom",
-		customType: "dock_plan_state",
+		customType: "tiny_plan_state",
 		data: { ...plan, items: plan.items.map((item) => ({ ...item })) },
 	});
 	write({ type: "entry_appended", entry });
@@ -358,7 +388,11 @@ async function streamAssistant(parts, { slow = false } = {}) {
 	return { durationMs: Date.now() - started, calls };
 }
 
-async function runTool(call = session.lastToolCall, { isError = false } = {}) {
+/**
+ * @param {any} [call]
+ * @param {{ isError?: boolean, output?: string }} [options]
+ */
+async function runTool(call = session.lastToolCall, { isError = false, output } = {}) {
 	if (!call) return;
 	write({
 		type: "tool_execution_start",
@@ -376,17 +410,31 @@ async function runTool(call = session.lastToolCall, { isError = false } = {}) {
 	});
 	await sleep(20);
 	const outcome = /** @type {PiToolOutput} */ (
-		call.name === "dock_plan"
+		call.name === "tiny_plan"
 			? applyPlan(call.arguments)
 			: call.name === "edit"
 				? {
 						content: [{ type: "text", text: `Successfully edited ${call.arguments.path}\n` }],
 						details: {
-							patch: `--- ${call.arguments.path}\n+++ ${call.arguments.path}\n@@ -1,2 +1,3 @@\n const a = 1;\n-const b = 2;\n+const b = 3;\n+const c = 4;\n`,
+							patch:
+								call.arguments?.patch ??
+								`--- ${call.arguments.path}
++++ ${call.arguments.path}
+@@ -1,2 +1,3 @@
+ const a = 1;
+-const b = 2;
++const b = 3;
++const c = 4;
+`,
 						},
 					}
 				: {
-						content: [{ type: "text", text: isError ? "boom from fake pi\n" : "hi from fake pi\n" }],
+						content: [
+							{
+								type: "text",
+								text: output ?? (isError ? "boom from fake pi\n" : "hi from fake pi\n"),
+							},
+						],
 						details: {},
 					}
 	);
@@ -464,10 +512,207 @@ async function planPrompt(message) {
 			],
 		};
 	}
-	await streamAssistant([{ type: "toolCall", name: "dock_plan", args }]);
+	await streamAssistant([{ type: "toolCall", name: "tiny_plan", args }]);
 	await runTool();
 	await sleep(message.includes("slow") ? 900 : 150);
 	await streamAssistant([{ type: "text", text: `plan action: ${args.action}` }]);
+}
+
+const SCREENSHOT_PLAN = [
+	{ text: "Inspect the context menu and settings flow", status: "done" },
+	{ text: "Add the 25% preset and Pi default fallback", status: "done" },
+	{ text: "Verify the threshold against the live context meter", status: "in_progress" },
+	{ text: "Check WSL path normalization", status: "pending" },
+	{ text: "Update README and screenshot", status: "pending" },
+	{ text: "Run the full E2E suite", status: "pending" },
+	{ text: "Remove the old ad-hoc threshold code", status: "cancelled" },
+];
+
+function screenshotPlanWith(statuses) {
+	return {
+		action: "set",
+		title: "Compaction preset rollout",
+		items: SCREENSHOT_PLAN.map((item, index) => ({
+			text: item.text,
+			status: statuses[index] ?? item.status,
+		})),
+	};
+}
+
+function demoPatch(path, added, removed) {
+	const lines = [`--- a/${path}`, `+++ b/${path}`, `@@ -1,${removed + 4} +1,${added + 4} @@`];
+	const oldCode = [
+		"const threshold = Math.round(contextWindow * 0.5);",
+		"if (settings.compaction?.enabled === false) return;",
+		"const preset = settings.compaction?.reserveTokens;",
+		"renderContextMenu();",
+	];
+	const newCode = [
+		"const preset = state.compaction?.thresholdPercent;",
+		"const enabled = state.compaction?.enabled !== false;",
+		"if (!enabled || !Number.isFinite(preset)) return;",
+		"renderCompactionMeter(used, limit);",
+	];
+	for (let index = 0; index < removed; index += 1) {
+		lines.push(`-${oldCode[index % oldCode.length]}`);
+	}
+	for (let index = 0; index < added; index += 1) {
+		lines.push(`+${newCode[index % newCode.length]}`);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+async function screenshotPrompt(turn) {
+	if (turn === 1) {
+		applyPlan(
+			screenshotPlanWith([
+				"done",
+				"in_progress",
+				"pending",
+				"pending",
+				"pending",
+				"pending",
+				"cancelled",
+			]),
+		);
+		const { calls } = await streamAssistant([
+			{
+				type: "thinking",
+				text: "The preset can reuse the existing threshold writer, so I'll keep the UI and settings code untouched apart from the new option.",
+			},
+			{ type: "text", text: "Adding the 25% preset next to the existing thresholds now." },
+			{ type: "toolCall", name: "read", args: { path: "public/app.js", limit: 180 } },
+			{
+				type: "toolCall",
+				name: "edit",
+				args: { path: "public/app.js", patch: demoPatch("public/app.js", 54, 13) },
+			},
+			{ type: "toolCall", name: "bash", args: { command: "npm run typecheck" } },
+		]);
+		await runTool(calls[0], { output: "Read public/app.js (420 lines)\n" });
+		await runTool(calls[1]);
+		await runTool(calls[2], {
+			output: "tsc -p tsconfig.json\ntsc -p tsconfig.extension.json\n",
+		});
+		await streamAssistant([
+			{
+				type: "text",
+				text: "The context panel now has a 25% preset next to 50%, 75%, and Pi default. The selected preset is read back from Pi's settings, so it survives restarts and stays in sync with the terminal.",
+			},
+		]);
+		return;
+	}
+
+	if (turn === 2) {
+		applyPlan(
+			screenshotPlanWith([
+				"done",
+				"done",
+				"in_progress",
+				"pending",
+				"pending",
+				"pending",
+				"cancelled",
+			]),
+		);
+		const first = await streamAssistant([
+			{
+				type: "thinking",
+				text: "The focused spec should catch the new preset, so I'll run it before touching the assertion.",
+			},
+			{ type: "text", text: "Running the focused context menu test." },
+			{
+				type: "toolCall",
+				name: "bash",
+				args: { command: "npx playwright test test/e2e/tinychat.spec.js -g compaction" },
+			},
+		]);
+		await runTool(first.calls[0], {
+			isError: true,
+			output: "1 failed\nExpected: pressed=true\nReceived: pressed=false\n",
+		});
+		const second = await streamAssistant([
+			{
+				type: "thinking",
+				text: "The preset is saved, but the test asserts before the settings response arrives.",
+			},
+			{
+				type: "text",
+				text: "The menu rendered before the settings round-trip, so I'll make the assertion wait for the response.",
+			},
+			{
+				type: "toolCall",
+				name: "edit",
+				args: {
+					path: "test/e2e/tinychat.spec.js",
+					patch: demoPatch("test/e2e/tinychat.spec.js", 12, 3),
+				},
+			},
+		]);
+		await runTool(second.calls[0]);
+		await streamAssistant([
+			{
+				type: "text",
+				text: "The focused spec is green. The 25% preset stays pressed on slower machines because the menu now waits for the settings response.",
+			},
+		]);
+		return;
+	}
+
+	applyPlan(
+		screenshotPlanWith([
+			"done",
+			"done",
+			"done",
+			"done",
+			"in_progress",
+			"pending",
+			"cancelled",
+		]),
+	);
+	const first = await streamAssistant([
+		{
+			type: "thinking",
+			text: "WSL uses the same POSIX separator, but the session directory still normalizes both slash styles. I'll check the helper before starting the cross-platform run.",
+		},
+		{
+			type: "text",
+			text: "Both separators should normalize to the same session directory. I'll verify the helper and then run the Pi integration suite.",
+		},
+		{ type: "toolCall", name: "read", args: { path: "src/sessions.js", limit: 80 } },
+		{
+			type: "toolCall",
+			name: "edit",
+			args: { path: "src/sessions.js", patch: demoPatch("src/sessions.js", 96, 21) },
+		},
+	]);
+	await runTool(first.calls[0], { output: "Read src/sessions.js (280 lines)\n" });
+	await runTool(first.calls[1]);
+	const second = await streamAssistant([
+		{
+			type: "thinking",
+			text: "The path helper is consistent. I'll run the Pi integration suite and then finish the README.",
+		},
+		{
+			type: "text",
+			text: "Path normalization is consistent for both separators. The Pi integration suite is running now; the README update is the only remaining step.",
+		},
+		{ type: "toolCall", name: "bash", args: { command: "npm run test:pi" } },
+	]);
+	const call = second.calls[0];
+	write({ type: "tool_execution_start", toolCallId: call.id, toolName: call.name, args: call.arguments });
+	await sleep(80);
+	write({
+		type: "tool_execution_update",
+		toolCallId: call.id,
+		toolName: call.name,
+		args: call.arguments,
+		partialResult: {
+			content: [{ type: "text", text: "starting real Pi integration...\n" }],
+			details: {},
+		},
+	});
+	await new Promise(() => {});
 }
 
 async function prompt(message, images = []) {
@@ -507,6 +752,12 @@ async function promptInner(message, images = []) {
 	write({ type: "message_start", message: userMessage });
 	write({ type: "message_end", message: userMessage });
 	pushMessage(userMessage);
+
+	if (SCREENSHOT_MODE) {
+		screenshotTurn += 1;
+		await screenshotPrompt(screenshotTurn);
+		return;
+	}
 
 	if (message.startsWith("/")) {
 		await streamAssistant([{ type: "text", text: `command accepted: ${message.split(/\s/)[0]}` }]);
@@ -753,7 +1004,7 @@ async function handle(record) {
 				toolResults: 1,
 				totalMessages: session.messages.length,
 				tokens: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, total: 120 },
-				cost: 0.001,
+				cost: session.cost,
 				contextUsage: session.contextUnknown
 					? { tokens: null, contextWindow: session.model.contextWindow, percent: null }
 					: {

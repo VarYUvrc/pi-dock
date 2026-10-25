@@ -139,7 +139,7 @@ export class PiBridge extends EventEmitter {
 		}
 		if (this.#exitInfo) return Promise.reject(new Error(this.#exitInfo.reason));
 
-		const id = `dock_${++this.#sequence}`;
+		const id = `req_${++this.#sequence}`;
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.#pending.delete(id);

@@ -9,7 +9,7 @@
 		"lib": ["ES2022"],
 		"types": ["node"],
 		"skipLibCheck": true,
-		// Dock only needs shape checks on the Pi boundary, not null/any rigor
+		// Pi TinyChat only needs shape checks on the Pi boundary, not null/any rigor
 		// across the whole runtime. Keep the bar low so JSDoc stays sparse.
 		"strict": false,
 		"noImplicitAny": false

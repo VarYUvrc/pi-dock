@@ -2476,9 +2476,9 @@ body.resizing-plan * {
 }
 
 /* Chromium's backdrop-filter does not sample the composited chat scroller, so
-   the chat behind a glass surface is blurred at the source instead. */
-.app:has(.popover:not([hidden]), .drawer:not([hidden]), .dialog-layer:not([hidden]))
-	.scroller {
+   full-surface overlays blur the chat at the source. Popovers keep only their
+   own localized backdrop blur instead of blurring the whole background. */
+.app:has(.drawer:not([hidden]), .dialog-layer:not([hidden])) .scroller {
 	filter: blur(12px);
 }
 

@@ -91,7 +91,7 @@ export async function setupWorkspace() {
 	return { root, project, agent, sessions, older, newer };
 }
 
-export async function startDock(workspace, extraEnv = {}) {
+export async function startTinyChat(workspace, extraEnv = {}) {
 	const port = await freePort();
 	const child = spawn(
 		process.execPath,
@@ -125,7 +125,7 @@ export async function startDock(workspace, extraEnv = {}) {
 
 	const url = await new Promise((resolve, reject) => {
 		const timer = setTimeout(() => {
-			reject(new Error(`dock did not start\n${stderr}`));
+			reject(new Error(`pi-tinychat did not start\n${stderr}`));
 		}, 20_000);
 		let output = "";
 		child.stdout.on("data", (chunk) => {
@@ -138,7 +138,7 @@ export async function startDock(workspace, extraEnv = {}) {
 		});
 		child.once("exit", (code) => {
 			clearTimeout(timer);
-			reject(new Error(`dock exited early (${code})\n${stderr}`));
+			reject(new Error(`pi-tinychat exited early (${code})\n${stderr}`));
 		});
 	});
 
@@ -151,18 +151,18 @@ export async function startDock(workspace, extraEnv = {}) {
 	};
 }
 
-export async function stopDock(dock, workspace) {
-	if (dock?.child && dock.child.exitCode === null) {
+export async function stopTinyChat(app, workspace) {
+	if (app?.child && app.child.exitCode === null) {
 		if (process.platform === "win32") {
-			spawnSync("taskkill", ["/pid", String(dock.child.pid), "/T", "/F"], {
+			spawnSync("taskkill", ["/pid", String(app.child.pid), "/T", "/F"], {
 				stdio: "ignore",
 			});
 		} else {
-			dock.child.kill("SIGTERM");
+			app.child.kill("SIGTERM");
 		}
 		await new Promise((resolve) => {
 			const timer = setTimeout(resolve, 3000);
-			dock.child.once("exit", () => {
+			app.child.once("exit", () => {
 				clearTimeout(timer);
 				resolve();
 			});
