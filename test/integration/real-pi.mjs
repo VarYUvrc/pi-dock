@@ -34,7 +34,7 @@ const call = async (command) => {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
-			"x-pi-dock-token": token,
+			"x-pi-tinychat-token": token,
 		},
 		body: JSON.stringify(command),
 	});

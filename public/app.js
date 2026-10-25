@@ -2,7 +2,8 @@ import { LANGUAGES, getLanguage, normalizeLanguage, setLanguage, t, applyStaticT
 import { escapeHtml, renderMarkdown } from "./markdown.js";
 
 const TOKEN = new URLSearchParams(location.search).get("token") ?? "";
-const STORAGE_KEY = "pi-dock:settings";
+const STORAGE_KEY = "pi-tinychat:settings";
+const LEGACY_STORAGE_KEY = "pi-dock:settings";
 const DEFAULT_SETTINGS = {
 	ctrlEnterSend: true,
 	theme: "system",
@@ -157,7 +158,8 @@ let dialogReturnFocus = null;
 
 function loadSettings() {
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
+		const raw =
+			localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
 		if (!raw) return { ...DEFAULT_SETTINGS };
 		const parsed = JSON.parse(raw);
 		if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SETTINGS };
@@ -228,7 +230,7 @@ async function api(command) {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
-			...(TOKEN ? { "x-pi-dock-token": TOKEN } : {}),
+			...(TOKEN ? { "x-pi-tinychat-token": TOKEN } : {}),
 		},
 		body: JSON.stringify(command),
 	});
@@ -2131,7 +2133,7 @@ function renderSettingsMenu() {
 		.join("");
 	const languageOptions = LANGUAGES.map(
 		(entry) =>
-			`<button type="button" data-language-option="${entry.value}" aria-pressed="${getLanguage() === entry.value}" data-testid="language-${entry.value}">${entry.label}</button>`,
+			`<option value="${entry.value}"${getLanguage() === entry.value ? " selected" : ""}>${entry.label}</option>`,
 	).join("");
 	dom.settingsMenu.innerHTML = `<div class="setting-row">
 		<span>${t("settings.theme")}</span>
@@ -2139,7 +2141,7 @@ function renderSettingsMenu() {
 	</div>
 	<div class="setting-row">
 		<span>${t("settings.language")}</span>
-		<div class="segmented" role="group" aria-label="${t("settings.language")}">${languageOptions}</div>
+		<select class="select" data-language-select data-testid="language-select" aria-label="${t("settings.language")}">${languageOptions}</select>
 	</div>
 	<div class="setting-row">
 		<span>${t("settings.ctrlEnter")}</span>
@@ -2282,15 +2284,6 @@ dom.settingsMenu.addEventListener("click", (event) => {
 		}
 		return;
 	}
-	const languageButton = event.target.closest("[data-language-option]");
-	if (languageButton) {
-		const next = normalizeLanguage(languageButton.dataset.languageOption);
-		if (!next || settings.language === next) return;
-		settings.language = next;
-		saveSettings();
-		applyLanguage();
-		return;
-	}
 	const toggle = event.target.closest("[data-setting]");
 	if (!toggle) return;
 	if (toggle.dataset.setting === "plan") {
@@ -2304,6 +2297,16 @@ dom.settingsMenu.addEventListener("click", (event) => {
 		saveSettings();
 		toggle.setAttribute("aria-checked", String(settings.ctrlEnterSend));
 	}
+});
+
+dom.settingsMenu.addEventListener("change", (event) => {
+	const select = event.target.closest("[data-language-select]");
+	if (!select) return;
+	const next = normalizeLanguage(select.value);
+	if (!next || settings.language === next) return;
+	settings.language = next;
+	saveSettings();
+	applyLanguage();
 });
 
 dom.contextMenu.addEventListener("click", async (event) => {

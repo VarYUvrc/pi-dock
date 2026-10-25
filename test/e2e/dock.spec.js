@@ -55,14 +55,14 @@ async function rpc(command) {
 		headers: {
 			"content-type": "application/json",
 			origin: `http://127.0.0.1:${dock.port}`,
-			"x-pi-dock-token": dock.token,
+			"x-pi-tinychat-token": dock.token,
 		},
 	});
 	return response.json();
 }
 
 test("loads the shell and enforces the token", async () => {
-	await expect(page.locator(".brand")).toContainText("Pi Dock Web");
+	await expect(page.locator(".brand")).toContainText("Pi TinyChat");
 	await expect(page.locator("#projectName")).toHaveText("project");
 	await expect(page.locator("#projectName .icon use")).toHaveAttribute("href", "#i-folder");
 	await expect(page.locator(".top-actions > #projectName + #modelGroup")).toHaveCount(1);
@@ -466,7 +466,7 @@ test("Ctrl+Enter setting is honoured and persisted", async () => {
 
 	const writes = await page.evaluate(() => window.__storageWrites);
 	expect(writes).toBe(1);
-	const stored = await page.evaluate(() => localStorage.getItem("pi-dock:settings"));
+	const stored = await page.evaluate(() => localStorage.getItem("pi-tinychat:settings"));
 	expect(JSON.parse(stored)).toEqual({
 		ctrlEnterSend: false,
 		theme: "system",
@@ -778,7 +778,7 @@ test("resizes the plan panel by dragging its edge", async () => {
 	await page.mouse.up();
 	await expect.poll(async () => (await panel.boundingBox()).width).toBeGreaterThan(initial + 60);
 	const stored = await page.evaluate(
-		() => JSON.parse(localStorage.getItem("pi-dock:settings")).planWidth,
+		() => JSON.parse(localStorage.getItem("pi-tinychat:settings")).planWidth,
 	);
 	expect(stored).toBeGreaterThan(initial + 60);
 
@@ -881,9 +881,10 @@ test("switches to English without reloading and persists it", async () => {
 	await expect(html).toHaveAttribute("lang", "ja");
 	await page.locator("#settingsButton").click();
 	await expect(page.locator("#settingsMenu")).toContainText("言語");
-	await page.getByTestId("language-en").click();
+	await expect(page.getByTestId("language-select")).toHaveValue("ja");
+	await page.getByTestId("language-select").selectOption("en");
 	await expect(html).toHaveAttribute("lang", "en");
-	await expect(page.getByTestId("language-en")).toHaveAttribute("aria-pressed", "true");
+	await expect(page.getByTestId("language-select")).toHaveValue("en");
 	await expect(page.locator("#settingsMenu")).toContainText("Theme");
 	await expect(page.locator("#settingsMenu")).toContainText("Language");
 	await expect(page.locator("#settingsButton")).toHaveAttribute("aria-label", "Settings");
@@ -893,8 +894,8 @@ test("switches to English without reloading and persists it", async () => {
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
 	await expect(html).toHaveAttribute("lang", "en");
 	await page.locator("#settingsButton").click();
-	await expect(page.getByTestId("language-en")).toHaveAttribute("aria-pressed", "true");
-	await page.getByTestId("language-ja").click();
+	await expect(page.getByTestId("language-select")).toHaveValue("en");
+	await page.getByTestId("language-select").selectOption("ja");
 	await expect(html).toHaveAttribute("lang", "ja");
 	await expect(page.locator("#settingsMenu")).toContainText("言語");
 });
@@ -1311,7 +1312,7 @@ test("keeps the previous run alive when starting a new chat", async () => {
 	await expect(page.getByTestId("message-assistant")).toContainText("chunk 129");
 });
 
-test("runs Dock built-in slash commands", async () => {
+test("runs Pi TinyChat built-in slash commands", async () => {
 	await input().fill("/compact");
 	await input().press("Control+Enter");
 	await expect(page.getByTestId("toast").filter({ hasText: "圧縮しました" })).toBeVisible();
@@ -1388,7 +1389,7 @@ test("blocks cross-origin and bad-host requests", async () => {
 		data: { type: "dock:snapshot" },
 		headers: {
 			"content-type": "application/json",
-			"x-pi-dock-token": dock.token,
+			"x-pi-tinychat-token": dock.token,
 			origin: "http://evil.example",
 		},
 	});

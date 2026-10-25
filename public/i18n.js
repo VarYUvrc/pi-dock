@@ -11,8 +11,8 @@ export const LANGUAGES = [
 
 export const TRANSLATIONS = {
 	en: {
-		"app.name": "Pi Dock Web",
-		"app.brandTitle": "Pi Dock Web",
+		"app.name": "Pi TinyChat",
+		"app.brandTitle": "Pi TinyChat",
 		"top.modelGroup": "Model and reasoning effort",
 		"top.model": "Model",
 		"top.thinking": "Reasoning effort",
@@ -189,8 +189,8 @@ export const TRANSLATIONS = {
 		"server.readSettings": "Could not read the settings file: {message}",
 	},
 	ja: {
-		"app.name": "Pi Dock Web",
-		"app.brandTitle": "Pi Dock Web",
+		"app.name": "Pi TinyChat",
+		"app.brandTitle": "Pi TinyChat",
 		"top.modelGroup": "モデルと推論強度",
 		"top.model": "モデル",
 		"top.thinking": "推論強度",

@@ -1,133 +1,153 @@
-# Pi Dock Web
+# Pi TinyChat
 
-Pi Coding Agent をブラウザから使うためのローカル Web UI。Pi のセッション・認証・モデル・履歴をそのまま使い、会話と Plan の進捗を 1 画面で確認できます。
+**Tiny UI. Full Pi. Zero Bloat.**
 
-![Pi Dock Web](https://raw.githubusercontent.com/VarYUvrc/pi-dock/main/docs/images/pi-dock-web.png)
+English | [日本語](docs/README.ja.md)
 
-## こんな人向け
+Pi TinyChat is a small, local web UI for the [Pi coding agent](https://pi.dev). It adds a wide screen, multiple sessions, and a readable plan view to Pi's terminal workflow — without rebuilding Pi.
 
-Pi をターミナルで使っている人へ。
+![Pi TinyChat](https://raw.githubusercontent.com/VarYUvrc/pi-tinychat/main/docs/images/pi-tinychat.png)
 
-- 会話と Plan の進捗を、1 画面で見たい
-- 実行中のセッションを残したまま、別の会話を開きたい
-- Plan をチェックボックスで確認しながら作業したい
-- 日本語 IME の変換確定 Enter で誤送信したくない
-- Pi の設定・認証・履歴をそのまま使いたい
+> Pi TinyChat is an independent community project. It is not an official Pi project and is not affiliated with the Pi maintainers.
 
-Pi Dock Web は Pi の TUI を置き換えるものではありません。広い画面、複数セッション、Plan の見やすさを足すための薄い UI です。
+## Who it is for
 
-### できること
+You already use Pi in a terminal and want to:
 
-- **Plan パネル** — チェックボックス・状態・進捗を表示。Pi 標準 TUI にはない Web UI 特有の機能で、エージェントの `dock_plan` 更新を即時反映します。トップバーの Plan ボタンで通常幅でも表示/非表示を切り替えられ、現在の状態がボタンの押下状態で分かります。
-- **セッション** — セッションごとに Pi プロセスを持ち、実行中でも別の会話へ切り替えられます。
-- **会話表示** — ストリーミング、思考/ツールの作業カード、Markdown、画像添付、拡張ダイアログ。
-- **モデル / コンテキスト** — モデル、推論強度、コンテキスト使用量、自動圧縮しきい値。しきい値は現在モデルのコンテキストに対する % で表示します。
-- **履歴** — 一覧・再開・名前・削除。
-- **UI** — English / 日本語、テーマ、IME 確定 Enter 対策。
+- see the conversation and the current plan on one screen
+- switch to another conversation while a session keeps running
+- review plan items as checkboxes instead of scrolling back
+- send messages with Ctrl+Enter without accidentally submitting while an IME is composing
+- keep using Pi's own authentication, models, settings, and session history
 
-## 使い始める前に（Pi の準備）
+Pi TinyChat is not a replacement for Pi's TUI. It is a thin UI that adds space, visibility, and session handling.
 
-Node.js **22.19 以上**が必要です。Pi 本体もインストールしてください。
+## Features
+
+- **Plan panel** — shows status, checkboxes, and progress. The bundled Plan tool writes plans into Pi's session as custom entries, and the panel updates as soon as the agent changes them. Plan items never advance from guessed tool activity.
+- **Independent sessions** — each session keeps its own Pi process, so switching conversations does not stop work in progress.
+- **Conversation view** — streaming output, compact thinking and tool cards, Markdown, image attachments, and extension dialogs.
+- **Models and context** — model, reasoning effort, context usage, and the auto-compaction threshold shown as a percentage of the current model's context window.
+- **History** — list, resume, rename, and delete Pi sessions.
+- **UI** — English and Japanese, light/dark/system themes, resizable plan panel, and IME-safe submit.
+
+## Before you start
+
+Node.js **22.19 or newer** is required. Node 20 is not supported. You also need Pi itself:
 
 ```bash
 npm install -g @earendil-works/pi-coding-agent
 pi --version
 ```
 
-### 認証
+### Authentication
 
-Dock から `/login` は実行できません。初回認証はターミナルで済ませてください。
+Pi TinyChat cannot run `/login` for you. Authenticate once in a terminal:
 
 ```bash
 pi
-# 起動したら /login でプロバイダを選択
+# then run /login
 ```
 
-または、Dock を起動するシェルで環境変数を設定します。例: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENCODE_API_KEY` / `DEEPSEEK_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_API_KEY`。ローカルモデルは `models.json` で設定します。
+Alternatively, set a provider key in the shell that launches Pi TinyChat, for example `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY`. Local models are configured in `models.json`.
 
-### モデル
+### Models
 
-ターミナルの `/model`、または Pi の `settings.json` にある `defaultProvider` / `defaultModel` で選択します。
+Choose a model with `/model` in Pi, or set `defaultProvider` / `defaultModel` in Pi's `settings.json`.
 
-### 動作確認
+### Check the setup
 
 ```bash
 pi -p "Reply with exactly: ok"
-# または
+# or
 pi auth check --provider <provider>
 ```
 
-### プロジェクトの `.pi` を使う場合
+### Project `.pi` settings
 
-そのプロジェクトで一度 `pi` を起動し、`/trust` を実行してください。RPC モードでは trust プロンプトが出ないため、未 trust のプロジェクト設定・拡張・skills は読み込まれません。Dock が自動 approve することはありません。
+If a project has its own `.pi` settings, extensions, or skills, run `pi` once in that project and execute `/trust`. RPC mode does not show the trust prompt, so untrusted project configuration is not loaded. Pi TinyChat never approves trust on your behalf.
 
-`PI_CODING_AGENT_DIR` を変更している場合は、Dock を起動する環境でも同じ値を設定してください。認証情報は Pi の `~/.pi/agent` に保存され、Dock 独自の認証情報は作りません。
+If you change `PI_CODING_AGENT_DIR`, use the same value in the environment that launches Pi TinyChat. Credentials stay in Pi's `~/.pi/agent`; Pi TinyChat does not keep its own credentials.
 
-## インストール / 起動
+## Run
 
-**現在は npm 公開前です。** リポジトリを clone して起動してください。
+**The package is not published on npm yet.** Clone the repository for now:
 
 ```bash
-git clone https://github.com/VarYUvrc/pi-dock.git
-cd pi-dock
+git clone https://github.com/VarYUvrc/pi-tinychat.git
+cd pi-tinychat
 npm install
 npm start -- --cwd /path/to/project
 ```
 
-ローカルに global install する場合:
+To install locally:
 
 ```bash
 npm install -g .
-pi-dock-web --cwd /path/to/project
+pi-tinychat --cwd /path/to/project
 ```
 
-npm 公開後は `npx pi-dock-web --cwd /path/to/project` で起動できる形に整えています。公開予定であり、現時点では `npx` では動きません。`npx pi-dock` は別プロジェクトのパッケージを指すため使用しないでください。
+Once published, the intended command is:
 
-## オプション
+```bash
+npx pi-tinychat --cwd /path/to/project
+```
+
+## Options
 
 ```text
---cwd <path>    Pi の作業ディレクトリ（既定: カレント）
---port <port>   127.0.0.1 のポート（既定: $PI_DOCK_PORT または 4310）
---no-open       ブラウザを自動で開かない
---pi <path>     pi 実行ファイルまたは CLI エントリポイント
---continue      そのディレクトリの直近セッションを再開
---help          ヘルプ
---version       バージョン
+--cwd <path>    Working directory for Pi (default: current directory)
+--port <port>   Port on 127.0.0.1 (default: $PI_TINYCHAT_PORT or 4310)
+--no-open       Do not open the browser automatically
+--pi <path>     Path to the pi executable or CLI entry point
+--continue      Resume the most recent Pi session in the directory
+--help          Show help
+--version       Show the version
 ```
 
-## うまく動かないとき
+## How it differs
 
-- **`pi` が見つからない** — `--pi /path/to/pi` または `PI_DOCK_PI` を指定します。
-- **モデルが `unknown`、送信に失敗する** — ターミナルで `/login` するか、Dock を起動するシェルに API キーを設定します。`pi auth check --provider <provider>` で確認できます。
-- **プロジェクトの `.pi` 設定が効かない** — そのプロジェクトで一度 `pi` を起動し `/trust` を実行します。
-- **履歴が空 / 別プロジェクトの履歴が出る** — `--cwd` が Pi で使ったディレクトリと一致しているか確認します。`PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` も Dock 側に必要です。
-- **ポートが使用中** — `--port 4311` など別のポートを指定します。
+Other Pi web UIs are useful, and Pi TinyChat does not compete with them on feature count:
 
-## 設計上の判断
+- **[pi-web](https://github.com/agegr/pi-web)** — a full web workspace built with Next.js, React, and the Pi SDK. It includes session branching, Git worktrees, file browsing, MCP/model/skill management, subagents, and mobile support.
+- **[pi-web-simple](https://pi.dev/packages/pi-web-simple)** — a web UI built on Pi's official RPC, with Git and file management.
+- **[pipane](https://github.com/mike-heunher/pipane)** — another browser UI that talks to Pi over RPC.
 
-- Pi の RPC モードに接続し、エージェントやセッション機構を再実装しません。
-- セッションごとに Pi プロセスを 1 つ持ちます。実行中のセッションを止めずに別のセッションへ切り替えます。
-- モデル・推論強度・コマンド・履歴は Pi から取得/参照します。
-- **Plan だけは意図的な追加**です。`dock_plan` 拡張を読み込み、Plan を Pi のセッション JSONL に custom entry として保存します。Dock がツール実行から進捗を推測することはありません。エージェントが `set` / `update` / `clear` した内容だけを表示します。
-- Dock 独自の DB・ログ・設定ファイルは作りません。UI 設定は `localStorage` のみです。Pi の `settings.json` はユーザー操作時（自動圧縮しきい値・有効/無効）だけ更新します。
-- 127.0.0.1 限定で待ち受け、Host / Origin / 起動トークンを検証します。Markdown はエスケープ優先でレンダリングします。
-- runtime 依存はゼロです。Pi の公式型は devDependency として取り込み、`npm run typecheck` で境界と拡張を検査します。
-- 多言語の文言は `public/i18n.js` に集約し、`npm run check:i18n` でキー欠落を検査します。
-- ビルド工程はありません。ブラウザは素の ES Module を読みます。
+Pi TinyChat deliberately stays smaller. Instead of reimplementing Pi's capabilities, it connects to Pi and gives the chat and plan experience more room.
 
-## 対応 Pi バージョン / 既知の制約
+## Design
 
-- Pi **1.4.0** で動作確認しています。CI では 1.4.0 と週次の最新 Pi を検証します。厳密な semver 保証はせず、Pi の更新に追従が必要になる場合があります。
-- TUI 専用のカスタム UI（`custom()` など）は再現しません。RPC ダイアログのみ対応します。
-- `/login` `/tree` `/fork` `/clone` など TUI 専用コマンドは Dock から実行できません。
-- プロジェクトの `.pi` 設定は Pi の trust に従います。事前の `/trust` が必要です。
-- `sessionDir` 設定（`PI_CODING_AGENT_SESSION_DIR` 以外）は履歴一覧に反映されない場合があります。
-- Plan 設定を OFF にしても、起動済み Pi プロセスから `dock_plan` 拡張は外れません。OFF は Dock の Plan UI のみを無効化します。
-- バックグラウンドセッションは Pi プロセスを保持するため、同時数に比例してメモリ/CPU を使います。
-- 複数タブ間のセッション切替は即時同期しません。
-- fork / clone / ブランチツリー表示は未対応です。
+- **Zero runtime dependencies.** No React, Next.js, bundler, or build step. The browser loads plain ES modules.
+- **Official RPC.** Pi TinyChat starts Pi with `pi --mode rpc` as a separate process and speaks JSONL. Agent behavior remains Pi's responsibility.
+- **Pi-native state.** Conversations and settings use Pi's files. There is no separate database, log store, or settings file; UI preferences live in `localStorage`.
+- **Independent sessions.** Each session keeps a Pi process alive, so switching conversations does not interrupt running work.
+- **Local-first.** The server binds to localhost and validates Host, Origin, and a per-launch token. Markdown rendering prioritizes escaping.
+- **Focused UI.** Thinking and tool calls are compact, and the plan panel shows exactly what the agent published. Pi TinyChat does not infer progress from tool calls.
+- **Compatibility over renaming.** The internal Plan tool and session entry keep their historical `dock_plan` / `dock_plan_state` names so plans stored in existing Pi sessions remain readable.
 
-## 開発
+"Lightweight" here means a small stack with few dependencies and responsibilities. It is not a claim about minimum memory use or feature count.
+
+## Troubleshooting
+
+- **`pi` is not found** — pass `--pi /path/to/pi` or set `PI_TINYCHAT_PI`.
+- **The model is `unknown` or sending fails** — run `/login` in a terminal, or set an API key in the shell that launches Pi TinyChat. Check with `pi auth check --provider <provider>`.
+- **Project `.pi` settings have no effect** — run `pi` once in that project and execute `/trust`.
+- **History is empty or shows another project** — make sure `--cwd` matches the directory you used with Pi. `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR` must also be visible to Pi TinyChat.
+- **The port is in use** — pass another port, for example `--port 4311`.
+
+## Compatibility and limitations
+
+- Tested with Pi **1.4.0**. CI checks 1.4.0 and the latest weekly Pi release. No strict semver guarantee is implied; Pi changes may require follow-up work.
+- TUI-only custom UI (`custom()` and similar) is not reproduced. Only RPC dialogs are supported.
+- TUI-only commands such as `/login`, `/tree`, `/fork`, and `/clone` cannot run from Pi TinyChat.
+- Project `.pi` configuration follows Pi's trust rules and requires `/trust` beforehand.
+- A custom `sessionDir` setting may not appear in the history list unless `PI_CODING_AGENT_SESSION_DIR` is set.
+- Turning the Plan setting off hides Pi TinyChat's Plan UI; it does not remove the Plan extension from an already running Pi process.
+- Background sessions keep Pi processes alive, so memory and CPU use grow with the number of open sessions.
+- Session switching is not synchronized across multiple tabs.
+- Fork, clone, and branch-tree views are not implemented.
+
+## Development
 
 ```bash
 npm ci
@@ -135,19 +155,19 @@ npm run lint
 npm run typecheck      # src + extension
 npm run check:i18n
 npm test               # Playwright E2E
-npm run test:pi        # 実 Pi（オフライン、認証不要）
-npm run pack:check     # tarball の内容と CLI 起動
-npm run check          # 上記をまとめて実行
+npm run test:pi        # real Pi, offline, no authentication
+npm run pack:check     # tarball contents and CLI startup
+npm run check          # all of the above
 ```
 
-実モデルを使う手動スモーク（課金・ネットワークあり。CI では実行しません）:
+Manual smoke test with a real model (network and billing; not run in CI):
 
 ```bash
 npm run smoke -- --cwd /path/to/project "Reply with exactly: pong"
 ```
 
-一時ファイルはリポジトリ内の `tmp/` を使います。CI は Ubuntu / Windows の Node 22.19 で実行し、週次で最新 Pi との互換性を確認します。公開用の release workflow はまだありません。
+Use the repository's `tmp/` directory for temporary files. CI runs on Node 22.19 on Ubuntu and Windows, with a weekly check against the latest Pi. There is no release workflow yet.
 
-## ライセンス
+## License
 
 MIT

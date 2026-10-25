@@ -22,7 +22,7 @@ const token = new URL(dock.url).searchParams.get("launch");
 const call = async (command) => {
 	const response = await fetch(`http://127.0.0.1:${dock.port}/api/rpc`, {
 		method: "POST",
-		headers: { "content-type": "application/json", "x-pi-dock-token": token },
+		headers: { "content-type": "application/json", "x-pi-tinychat-token": token },
 		body: JSON.stringify(command),
 	});
 	const body = await response.json();

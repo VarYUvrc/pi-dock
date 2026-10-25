@@ -660,7 +660,7 @@ export async function createDock({
 		for (const part of header.split(";")) {
 			const separator = part.indexOf("=");
 			if (separator === -1) continue;
-			if (part.slice(0, separator).trim() !== "pi_dock") continue;
+			if (part.slice(0, separator).trim() !== "pi_tinychat") continue;
 			try {
 				return decodeURIComponent(part.slice(separator + 1).trim());
 			} catch {
@@ -671,7 +671,7 @@ export async function createDock({
 	}
 
 	function authorized(request, url) {
-		const header = request.headers["x-pi-dock-token"];
+		const header = request.headers["x-pi-tinychat-token"];
 		if (typeof header === "string" && header === token) return true;
 		if (cookieToken(request) === token) return true;
 		return (
@@ -732,14 +732,14 @@ export async function createDock({
 		) {
 			if (!authorized(request, url)) {
 				response.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
-				response.end("Unauthorized — open the URL printed by pi-dock-web");
+				response.end("Unauthorized — open the URL printed by pi-tinychat");
 				return;
 			}
 			// Exchange the launch credential for a localhost cookie and redirect to
 			// a clean address. The credential itself stays as strong as before.
 			response.writeHead(303, {
 				location: "/",
-				"set-cookie": `pi_dock=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`,
+				"set-cookie": `pi_tinychat=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`,
 				"cache-control": "no-store",
 				"referrer-policy": "no-referrer",
 			});
@@ -815,7 +815,7 @@ export async function createDock({
 		const needsToken = asset.type.startsWith("text/html");
 		if (needsToken && !authorized(request, url)) {
 			response.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
-			response.end("Unauthorized — open the URL printed by pi-dock-web");
+			response.end("Unauthorized — open the URL printed by pi-tinychat");
 			return;
 		}
 		response.writeHead(200, {

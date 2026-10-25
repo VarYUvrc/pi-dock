@@ -1,11 +1,11 @@
 {
-	"name": "pi-dock-web",
+	"name": "pi-tinychat",
 	"version": "0.1.0",
 	"private": true,
-	"description": "Pi Dock Web — a local web UI for the Pi coding agent",
+	"description": "Pi TinyChat — Tiny UI. Full Pi. Zero Bloat.",
 	"type": "module",
 	"bin": {
-		"pi-dock-web": "bin/pi-dock-web.js"
+		"pi-tinychat": "bin/pi-tinychat.js"
 	},
 	"files": [
 		"bin",
@@ -19,7 +19,7 @@
 		"node": ">=22.19.0"
 	},
 	"scripts": {
-		"start": "node bin/pi-dock-web.js",
+		"start": "node bin/pi-tinychat.js",
 		"test": "playwright test",
 		"test:pi": "node test/integration/real-pi.mjs",
 		"smoke": "node scripts/smoke-real.mjs",
@@ -33,11 +33,11 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/VarYUvrc/pi-dock.git"
+		"url": "git+https://github.com/VarYUvrc/pi-tinychat.git"
 	},
-	"homepage": "https://github.com/VarYUvrc/pi-dock#readme",
+	"homepage": "https://github.com/VarYUvrc/pi-tinychat#readme",
 	"bugs": {
-		"url": "https://github.com/VarYUvrc/pi-dock/issues"
+		"url": "https://github.com/VarYUvrc/pi-tinychat/issues"
 	},
 	"author": "VarYUvrc",
 	"devDependencies": {
@@ -54,7 +54,8 @@
 		"coding-agent",
 		"web-ui",
 		"local-first",
-		"plan"
+		"plan",
+		"tinychat"
 	],
 	"license": "MIT"
 }

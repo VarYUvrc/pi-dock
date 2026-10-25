@@ -1,5 +1,5 @@
 /**
- * Dock Plan - minimal implementation plan tool for Pi Dock.
+ * Dock Plan - minimal implementation plan tool for Pi TinyChat.
  *
  * The plan is stored in Pi's session JSONL twice: a custom entry is appended
  * after every successful mutation so the Web UI can update immediately, and

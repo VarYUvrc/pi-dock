@@ -5,14 +5,14 @@ import { resolve } from "node:path";
 import { createDock } from "../src/server.js";
 import { locatePi } from "../src/pi-path.js";
 
-const HELP = `Pi Dock Web — local web UI for the Pi coding agent
+const HELP = `Pi TinyChat — Tiny UI. Full Pi. Zero Bloat.
 
 Usage:
-  pi-dock-web [options]
+  pi-tinychat [options]
 
 Options:
   --cwd <path>    Working directory for Pi (default: current directory)
-  --port <port>   Port on 127.0.0.1 (default: $PI_DOCK_PORT or 4310)
+  --port <port>   Port on 127.0.0.1 (default: $PI_TINYCHAT_PORT or 4310)
   --no-open       Do not open the browser automatically
   --pi <path>     Path to the pi executable or CLI entry point
   --continue      Resume the most recent Pi session in the directory
@@ -77,9 +77,9 @@ async function main() {
 	if (!existsSync(cwd)) throw new Error(`ディレクトリが見つかりません: ${cwd}`);
 
 	const env = { ...process.env };
-	if (options.pi) env.PI_DOCK_PI = options.pi;
+	if (options.pi) env.PI_TINYCHAT_PI = options.pi;
 	const launcher = locatePi(env);
-	const port = Number(options.port ?? process.env.PI_DOCK_PORT ?? 4310);
+	const port = Number(options.port ?? process.env.PI_TINYCHAT_PORT ?? 4310);
 	if (!Number.isInteger(port) || port < 0 || port > 65535) {
 		throw new Error(`ポート番号が不正です: ${options.port}`);
 	}
@@ -91,7 +91,7 @@ async function main() {
 		port,
 		piArgs: options.continue ? ["--continue"] : [],
 	});
-	process.stdout.write(`\n  Pi Dock Web  ${dock.url}\n  ${cwd}\n\n`);
+	process.stdout.write(`\n  Pi TinyChat  ${dock.url}\n  ${cwd}\n\n`);
 	if (options.open !== false) openBrowser(dock.url);
 
 	let stopping = false;
@@ -106,6 +106,6 @@ async function main() {
 }
 
 main().catch((error) => {
-	process.stderr.write(`pi-dock-web: ${error.message}\n`);
+	process.stderr.write(`pi-tinychat: ${error.message}\n`);
 	process.exit(1);
 });

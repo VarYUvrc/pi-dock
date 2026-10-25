@@ -96,7 +96,7 @@ export async function startDock(workspace, extraEnv = {}) {
 	const child = spawn(
 		process.execPath,
 		[
-			join(ROOT, "bin", "pi-dock-web.js"),
+			join(ROOT, "bin", "pi-tinychat.js"),
 			"--no-open",
 			"--port",
 			String(port),
