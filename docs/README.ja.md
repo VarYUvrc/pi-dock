@@ -17,7 +17,7 @@ Pi TinyChat は、[Pi coding agent](https://pi.dev) をローカルブラウザ�
 
 > Pi TinyChat は独立したコミュニティプロジェクトです。Pi の公式プロジェクトではなく、Pi のメンテナとは関係ありません。
 
-![Pi TinyChat のスクリーンショット](https://raw.githubusercontent.com/VarYUvrc/pi-tinychat/main/docs/images/pi-tinychat.png)
+![Pi TinyChat のスクリーンショット（ライトテーマとダークテーマ）](https://raw.githubusercontent.com/VarYUvrc/pi-tinychat/main/docs/images/pi-tinychat.png)
 
 ## できること
 

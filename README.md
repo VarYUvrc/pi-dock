@@ -17,7 +17,7 @@ It is for people who like Pi in a terminal but want a calmer screen for long tas
 
 > Pi TinyChat is an independent community project. It is not an official Pi project and is not affiliated with the Pi maintainers.
 
-![Pi TinyChat screenshot](https://raw.githubusercontent.com/VarYUvrc/pi-tinychat/main/docs/images/pi-tinychat.png)
+![Pi TinyChat screenshot in light and dark themes](https://raw.githubusercontent.com/VarYUvrc/pi-tinychat/main/docs/images/pi-tinychat.png)
 
 ## What you get
 
