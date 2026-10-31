@@ -30,6 +30,10 @@ const PLAN_EXTENSION = join(
 const MAX_BODY = 12 * 1024 * 1024;
 const HEARTBEAT_MS = 25_000;
 const PORT_FALLBACK_ATTEMPTS = 20;
+// Windows also reports reserved/excluded ports as EACCES rather than EADDRINUSE.
+const RETRYABLE_LISTEN_ERRORS = new Set(
+	process.platform === "win32" ? ["EADDRINUSE", "EACCES"] : ["EADDRINUSE"],
+);
 
 const RPC_TIMEOUTS = {
 	abort: 90_000,
@@ -863,7 +867,7 @@ export async function createTinyChat({
 			break;
 		} catch (error) {
 			listenError = error;
-			if (error.code !== "EADDRINUSE") {
+			if (!RETRYABLE_LISTEN_ERRORS.has(error.code)) {
 				clearInterval(heartbeat);
 				throw error;
 			}

@@ -19,5 +19,12 @@ jobs:
           node-version: "22.19.0"
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      # --with-deps on Windows only installs Server-Media-Foundation (video
+      # recording) and costs ~3 minutes, so keep it to Linux.
+      - name: Install Chromium
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+      - name: Install Chromium (Windows)
+        if: runner.os == 'Windows'
+        run: npx playwright install chromium
       - run: npm run check
