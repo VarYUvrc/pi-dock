@@ -25,10 +25,6 @@ const THEMES = ["system", "light", "dark"];
 const MAX_TOOL_OUTPUT = 40_000;
 const LIVE_RENDER_MS = 250;
 const HISTORY_PAGE = 50;
-const RUN_PROGRESS_DELAY_MS = 10_000;
-const RUN_PROGRESS_TOOLS = 3;
-const RUN_PROGRESS_DETAIL_MS = 30_000;
-const RUN_PROGRESS_DETAIL_TOOLS = 5;
 
 const $ = (id) => document.getElementById(id);
 const dom = {
@@ -56,6 +52,8 @@ const dom = {
 	jumpButton: $("jumpButton"),
 	projectName: $("projectName"),
 	projectLabel: $("projectLabel"),
+	gitBranch: $("gitBranch"),
+	gitBranchLabel: $("gitBranchLabel"),
 	sessionName: $("sessionName"),
 	modelButton: $("modelButton"),
 	modelLabel: $("modelLabel"),
@@ -110,6 +108,7 @@ const state = {
 	diff: null,
 	cwd: "",
 	runtimeId: "",
+	gitBranch: "",
 	sessionName: "",
 	sessionId: "",
 	model: null,
@@ -119,7 +118,6 @@ const state = {
 	commands: [],
 	messages: [],
 	plan: null,
-	runNote: null,
 	attachments: [],
 	live: null,
 	tools: {},
@@ -164,7 +162,6 @@ let statsGeneration = 0;
 let elapsedTimer = 0;
 let planSignature = "";
 let runStatusSignature = "";
-let lastRunProgressStage = 0;
 let composing = false;
 let compositionEndedAt = Number.NEGATIVE_INFINITY;
 let dialogReturnFocus = null;
@@ -293,6 +290,7 @@ async function refreshSnapshot() {
 	statsGeneration += 1;
 	state.runtimeId = snapshot.runtime ?? "";
 	state.cwd = snapshot.cwd ?? "";
+	state.gitBranch = snapshot.gitBranch ?? "";
 	state.sessionState = snapshot.state ?? null;
 	state.model = snapshot.state?.model ?? null;
 	state.thinkingLevel = snapshot.state?.thinkingLevel ?? "off";
@@ -314,7 +312,6 @@ async function refreshSnapshot() {
 	state.levels = snapshot.levels?.length ? snapshot.levels : ["off"];
 	state.commands = snapshot.commands ?? [];
 	state.plan = settings.plan ? (snapshot.plan ?? null) : null;
-	state.runNote = state.running ? (state.plan?.note ?? null) : null;
 	state.statuses =
 		snapshot.statuses && typeof snapshot.statuses === "object" ? { ...snapshot.statuses } : {};
 	state.widgets =
@@ -343,7 +340,6 @@ async function refreshSnapshot() {
 	messageNodes.clear();
 	planSignature = "";
 	runStatusSignature = "";
-	lastRunProgressStage = 0;
 	dom.messageList.innerHTML = "";
 	stickToBottom = true;
 	renderChrome();
@@ -372,6 +368,10 @@ function handleRecord(record) {
 	}
 	switch (record.type) {
 		case "tinychat:hello":
+			return;
+		case "tinychat:git":
+			state.gitBranch = record.branch ?? "";
+			renderChrome();
 			return;
 		case "tinychat:runtime": {
 			const info = record.runtime;
@@ -403,7 +403,6 @@ function handleRecord(record) {
 			state.live = null;
 			state.aborting = false;
 			state.pendingUser = null;
-			state.runNote = null;
 			state.statuses = {};
 			state.widgets = {};
 			state.extensionTitle = "";
@@ -417,7 +416,6 @@ function handleRecord(record) {
 		case "tinychat:plan":
 			if (!settings.plan) return;
 			state.plan = record.plan ?? null;
-			state.runNote = state.running ? (record.plan?.note ?? null) : null;
 			renderPlan();
 			renderRunStatus();
 			return;
@@ -431,9 +429,7 @@ function handleRecord(record) {
 			state.aborting = false;
 			state.retry = null;
 			state.diff = null;
-			state.runNote = null;
 			runStatusSignature = "";
-			lastRunProgressStage = 0;
 			state.sendMode = "steer";
 			state.live = { blocks: [], tools: state.tools };
 			startStatsPolling();
@@ -451,9 +447,7 @@ function handleRecord(record) {
 			state.sendMode = "steer";
 			state.live = null;
 			state.tools = {};
-			state.runNote = null;
 			runStatusSignature = "";
-			lastRunProgressStage = 0;
 			stopStatsPolling();
 			stopElapsedTimer();
 			renderChrome();
@@ -710,11 +704,11 @@ function onToolEvent(record) {
 		tool.durationMs = record.durationMs ?? (tool.startedAt ? Date.now() - tool.startedAt : undefined);
 		state.tools[id] = tool;
 		accumulateToolDiff(record);
-		renderRunStatus();
 		startStatsPolling();
 		scheduleStats(900);
 	}
 	state.toolRev[id] = (state.toolRev[id] ?? 0) + 1;
+	renderRunStatus();
 	if (record.type === "tool_execution_end") scheduleLive(true);
 	else scheduleLive();
 	scheduleMessages();
@@ -2415,12 +2409,10 @@ function closePlanDrawer() {
 function applyPlanSetting() {
 	if (!settings.plan) {
 		state.plan = null;
-		state.runNote = null;
 		planDrawerOpen = false;
 	}
 	planSignature = "";
 	runStatusSignature = "";
-	lastRunProgressStage = 0;
 	syncPlanPanelState();
 	renderPlan();
 	renderRunStatus();
@@ -2736,6 +2728,7 @@ function scheduleLive(immediate = false) {
 
 
 let previousPlanStatuses = new Map();
+let previousPlanFocus = "";
 
 function planListSignature(plan) {
 	const items = Array.isArray(plan?.items) ? plan.items : [];
@@ -2745,9 +2738,49 @@ function planListSignature(plan) {
 	});
 }
 
+function planNotesFor(itemId) {
+	const items = Array.isArray(state.plan?.items) ? state.plan.items : [];
+	const item = items.find((entry) => entry.id === itemId);
+	return Array.isArray(item?.notes) ? item.notes : [];
+}
+
+function renderPlanNotes() {
+	for (const node of dom.planItems.querySelectorAll("[data-plan-id]")) {
+		const texts = planNotesFor(node.dataset.planId);
+		let list = node.querySelector(":scope > .plan-notes");
+		const existed = Boolean(list);
+		if (!texts.length) {
+			list?.remove();
+			continue;
+		}
+		if (!list) {
+			list = document.createElement("ul");
+			list.className = "plan-notes";
+			node.append(list);
+		}
+		const signature = JSON.stringify(texts);
+		if (list.dataset.signature === signature) continue;
+		list.dataset.signature = signature;
+		// Append-only updates keep the existing bullets from re-animating.
+		const rendered = [...list.children].map((child) => child.textContent);
+		const appendOnly =
+			rendered.length < texts.length && rendered.every((text, index) => text === texts[index]);
+		if (!appendOnly) list.replaceChildren();
+		for (let index = appendOnly ? rendered.length : 0; index < texts.length; index += 1) {
+			const note = document.createElement("li");
+			note.className = "plan-note";
+			note.dataset.testid = "plan-note";
+			note.textContent = texts[index];
+			list.append(note);
+		}
+		if (existed) list.lastElementChild?.scrollIntoView({ block: "nearest" });
+	}
+}
+
 function renderPlan() {
 	if (!settings.plan) {
 		previousPlanStatuses = new Map();
+		previousPlanFocus = "";
 		planSignature = "";
 		dom.planItems.replaceChildren();
 		dom.planPanel.classList.remove("has-plan");
@@ -2764,12 +2797,16 @@ function renderPlan() {
 	dom.planTitle.textContent = hasPlan ? plan.title || "Plan" : "Plan";
 	if (!hasPlan) {
 		previousPlanStatuses = new Map();
+		previousPlanFocus = "";
 		planSignature = "";
 		dom.planItems.replaceChildren();
 		return;
 	}
 	const signature = planListSignature(plan);
-	if (signature === planSignature) return;
+	if (signature === planSignature) {
+		renderPlanNotes();
+		return;
+	}
 	planSignature = signature;
 	// Stagger checkmarks that turn done together so a batched plan update still
 	// reads as steps filling in one by one.
@@ -2787,6 +2824,7 @@ function renderPlan() {
 		const entry = document.createElement("li");
 		entry.className = `plan-item ${item.status}`;
 		entry.dataset.status = item.status;
+		entry.dataset.planId = item.id;
 		entry.dataset.testid = "plan-item";
 		if (item.status === "in_progress") entry.setAttribute("aria-current", "step");
 		const order = newlyDone.indexOf(item.id);
@@ -2800,7 +2838,16 @@ function renderPlan() {
 		entry.append(box, text);
 		return entry;
 	});
+	const focus = items.find((item) => item.status === "in_progress") ?? items[items.length - 1];
+	const focusKey = focus ? `${focus.id}:${focus.status}` : "";
+	const focusChanged = focusKey !== previousPlanFocus;
+	previousPlanFocus = focusKey;
 	dom.planItems.replaceChildren(...nodes);
+	renderPlanNotes();
+	if (focusChanged && focus) {
+		// The plan is a log now; keep the current step visible as it grows.
+		nodes.find((node) => node.dataset.planId === focus.id)?.scrollIntoView({ block: "nearest" });
+	}
 }
 
 function messageRevision(message, ctx) {
@@ -3089,7 +3136,8 @@ function toolKind(name) {
 	return "tool";
 }
 
-const TOOL_KIND_LABELS = {
+const WORK_KIND_LABELS = {
+	thinking: "Thinking",
 	read: "Read",
 	edit: "Edit",
 	write: "Write",
@@ -3103,9 +3151,18 @@ const TOOL_KIND_LABELS = {
 	tool: "Tool",
 };
 
-function workToolKinds(items) {
+function workKindIcon(kind) {
+	if (kind === "thinking") return "i-spark";
+	return `i-${kind === "web" ? "globe" : kind}`;
+}
+
+function workKinds(items) {
 	const seen = new Set();
 	const kinds = [];
+	if (items.some((item) => item.kind === "thinking")) {
+		seen.add("thinking");
+		kinds.push("thinking");
+	}
 	for (const item of items) {
 		if (item.kind !== "tool") continue;
 		const kind = toolKind(item.tool?.name);
@@ -3125,12 +3182,12 @@ function workMarkup(items, key, prefix) {
 	const rail = shown
 		.map((value) => `<i class="work-dot ${value}"></i>`)
 		.join("");
-	const kinds = workToolKinds(items);
+	const kinds = workKinds(items);
 	const tools = kinds.length
 		? `<span class="work-tools" title="${escapeHtml(
-				kinds.map((kind) => TOOL_KIND_LABELS[kind] ?? kind).join(" · "),
+				kinds.map((kind) => WORK_KIND_LABELS[kind] ?? kind).join(" · "),
 			)}" aria-hidden="true">${kinds
-				.map((kind) => `<svg class="icon"><use href="#i-${kind}"/></svg>`)
+				.map((kind) => `<svg class="icon"><use href="#${workKindIcon(kind)}"/></svg>`)
 				.join("")}</span>`
 		: "";
 	const body = items
@@ -3274,6 +3331,12 @@ function reuseLiveWork(oldMount, node) {
 		const oldRail = oldSummary?.querySelector(".work-rail");
 		const freshRail = freshSummary?.querySelector(".work-rail");
 		if (oldRail && freshRail) oldRail.innerHTML = freshRail.innerHTML;
+		const oldTools = oldSummary?.querySelector(".work-tools");
+		const freshTools = freshSummary?.querySelector(".work-tools");
+		if (oldTools && freshTools) oldTools.replaceWith(freshTools);
+		else if (oldSummary && freshTools)
+			oldSummary.insertBefore(freshTools, oldSummary.querySelector(".work-alert"));
+		else if (oldTools) oldTools.remove();
 		const oldAlert = oldSummary?.querySelector(".work-alert");
 		const freshAlert = freshSummary?.querySelector(".work-alert");
 		if (freshAlert && !oldAlert) {
@@ -3324,10 +3387,6 @@ function runTools() {
 	return Object.values(state.tools).filter((tool) => tool && !isPlanTool(tool.name));
 }
 
-function runToolCount() {
-	return runTools().length;
-}
-
 function latestRunTool() {
 	const tools = runTools();
 	if (!tools.length) return null;
@@ -3338,73 +3397,16 @@ function latestRunTool() {
 	return latest;
 }
 
-function nextPlanItem() {
-	const items = Array.isArray(state.plan?.items) ? state.plan.items : [];
-	const current = items.findIndex((item) => item.status === "in_progress");
-	if (current !== -1) {
-		return items.slice(current + 1).find((item) => item.status === "pending") ?? null;
-	}
-	return items.find((item) => item.status === "pending") ?? null;
-}
-
 function runToolLabel(tool) {
 	const verb = t(`run.tool.${toolKind(tool?.name)}`);
 	const summary = toolSummary(tool?.name, tool?.args).replace(/\s+/g, " ").trim();
 	return summary ? `${verb} ${summary}` : verb;
 }
 
-function runProgressStage() {
-	if (
-		!settings.plan ||
-		!state.running ||
-		state.compacting ||
-		state.retry ||
-		state.aborting
-	) {
-		return 0;
-	}
-	const elapsed = Number.isFinite(state.runStartedAt) ? Date.now() - state.runStartedAt : 0;
-	const toolCount = runToolCount();
-	if (elapsed >= RUN_PROGRESS_DETAIL_MS && toolCount >= RUN_PROGRESS_DETAIL_TOOLS) return 2;
-	if (state.runNote || elapsed >= RUN_PROGRESS_DELAY_MS || toolCount >= RUN_PROGRESS_TOOLS) {
-		return 1;
-	}
-	return 0;
+function runToolIcon(tool) {
+	return workKindIcon(toolKind(tool?.name));
 }
 
-function runProgressMarkup(stage) {
-	if (!stage) return "";
-	const note =
-		typeof state.runNote === "string" ? state.runNote.replace(/\s+/g, " ").trim() : "";
-	const tool = latestRunTool();
-	const toolLabel = tool ? runToolLabel(tool) : "";
-	const detailed = stage >= 2;
-	const parts = [];
-	if (note) parts.push(note);
-	if (toolLabel) parts.push(toolLabel);
-	if (!note && !toolLabel) parts.push(t("run.thinking"));
-	if (detailed) {
-		const count = runToolCount();
-		if (count) parts.push(t("run.tools", { count }));
-		if (!note) {
-			const next = nextPlanItem();
-			if (next?.text) {
-				parts.push(`${t("run.next")}: ${next.text.replace(/\s+/g, " ").trim()}`);
-			}
-		}
-	}
-	const text = parts.filter(Boolean).join(" · ");
-	if (!text) return "";
-	const kind = note ? "note" : tool ? "tool" : "thinking";
-	const iconKind = tool ? toolKind(tool.name) : "";
-	const icon = note
-		? "i-plan"
-		: tool
-			? `i-${iconKind === "web" ? "globe" : iconKind}`
-			: "i-spark";
-	const escaped = escapeHtml(text);
-	return `<div class="run-progress" data-testid="run-progress" data-kind="${kind}" title="${escaped}"><svg class="icon" aria-hidden="true"><use href="#${icon}"/></svg><span class="run-progress-text">${escaped}</span></div>`;
-}
 
 function updateElapsed() {
 	const element = dom.runStatus.querySelector("[data-testid='run-elapsed']");
@@ -3412,8 +3414,6 @@ function updateElapsed() {
 		if (!Number.isFinite(state.runStartedAt)) element.textContent = "";
 		else element.textContent = formatElapsed(Date.now() - state.runStartedAt);
 	}
-	const stage = runProgressStage();
-	if (stage !== lastRunProgressStage) renderRunStatus();
 }
 
 function startElapsedTimer() {
@@ -3436,20 +3436,18 @@ function renderRunStatus() {
 	dom.runStatus.hidden = !active;
 	if (!active) {
 		runStatusSignature = "";
-		lastRunProgressStage = 0;
 		stopElapsedTimer();
 		dom.runStatus.replaceChildren();
 		return;
 	}
-	const stage = runProgressStage();
-	lastRunProgressStage = stage;
-	const progress = runProgressMarkup(stage);
 	const text = state.compacting
 		? "Compacting context"
 		: state.retry
 			? `Retry ${state.retry.attempt}/${state.retry.maxAttempts}`
 			: "";
 	const diff = state.diff;
+	const tool = latestRunTool();
+	const toolLabel = tool ? runToolLabel(tool) : "";
 	const meta = `<div class="run-meta"><span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>${
 		text ? `<span>${escapeHtml(text)}</span>` : ""
 	}${
@@ -3460,8 +3458,12 @@ function renderRunStatus() {
 		Number.isFinite(state.runStartedAt)
 			? '<span class="run-elapsed" data-testid="run-elapsed"></span>'
 			: ""
+	}${
+		toolLabel
+			? `<span class="run-tool" data-testid="run-tool" data-kind="${toolKind(tool.name)}" title="${escapeHtml(toolLabel)}"><svg class="icon" aria-hidden="true"><use href="#${runToolIcon(tool)}"/></svg><span class="run-tool-text">${escapeHtml(toolLabel)}</span></span>`
+			: ""
 	}</div>`;
-	const html = `${progress}${meta}`;
+	const html = meta;
 	if (html !== runStatusSignature) {
 		runStatusSignature = html;
 		dom.runStatus.innerHTML = html;
@@ -3475,6 +3477,9 @@ function renderChrome() {
 	dom.projectLabel.textContent = project;
 	dom.projectName.hidden = !project;
 	dom.projectName.title = state.cwd;
+	dom.gitBranchLabel.textContent = state.gitBranch;
+	dom.gitBranch.hidden = !state.gitBranch;
+	dom.gitBranch.title = state.gitBranch ? `Git branch: ${state.gitBranch}` : "";
 	dom.sessionName.textContent = state.sessionName;
 	dom.sessionName.title = state.sessionName;
 	dom.modelLabel.textContent = state.model?.name ?? "Model";

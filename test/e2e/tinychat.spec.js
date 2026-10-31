@@ -65,7 +65,11 @@ test("loads the shell and enforces the token", async () => {
 	await expect(page.locator(".brand")).toContainText("Pi TinyChat");
 	await expect(page.locator("#projectName")).toHaveText("project");
 	await expect(page.locator("#projectName .icon use")).toHaveAttribute("href", "#i-folder");
-	await expect(page.locator(".top-actions > #projectName + #modelGroup")).toHaveCount(1);
+	await expect(page.locator("#gitBranch")).toHaveText("main");
+	await expect(page.locator("#gitBranch .icon use")).toHaveAttribute("href", "#i-branch");
+	await expect(page.locator(".top-actions > #projectName + #gitBranch + #modelGroup")).toHaveCount(
+		1,
+	);
 	await expect(page.locator("#modelGroup > #modelButton + #thinkingButton")).toHaveCount(1);
 	await expect(page.locator("#composer")).toBeVisible();
 	await expect(page.getByTestId("message-user")).toHaveCount(0);
@@ -103,6 +107,7 @@ test("loads the shell and enforces the token", async () => {
 		};
 		const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
 		const project = rect("#projectLabel");
+		const branch = rect("#gitBranchLabel");
 		const model = rect("#modelLabel");
 		const thinking = rect("#thinkingLabel");
 		return {
@@ -112,7 +117,8 @@ test("loads the shell and enforces the token", async () => {
 			groupStyle: style("#modelGroup"),
 			iconWidth: rect("#projectName .icon").width,
 			chevrons: document.querySelectorAll("#modelGroup .chip > .chev").length,
-			projectToModel: model.left - project.right,
+			projectToBranch: branch.left - project.right,
+			branchToModel: model.left - branch.right,
 			modelToThinking: thinking.left - model.right,
 		};
 	});
@@ -122,8 +128,26 @@ test("loads the shell and enforces the token", async () => {
 	expect(topbar.chevrons).toBe(2);
 	expect(topbar.chipStyle.background).toBe("rgba(0, 0, 0, 0)");
 	expect(topbar.groupStyle.background).not.toBe("rgba(0, 0, 0, 0)");
-	expect(topbar.projectToModel).toBeGreaterThan(0);
+	expect(topbar.projectToBranch).toBeGreaterThan(0);
+	expect(topbar.branchToModel).toBeGreaterThan(0);
 	expect(topbar.modelToThinking).toBeGreaterThan(0);
+});
+
+test("follows git branch changes without polling", async () => {
+	await expect(page.locator("#gitBranchLabel")).toHaveText("main");
+
+	await writeFile(
+		join(workspace.project, ".git", "HEAD"),
+		"ref: refs/heads/feature/live-branch\n",
+	);
+	await expect(page.locator("#gitBranchLabel")).toHaveText("feature/live-branch");
+
+	await writeFile(
+		join(workspace.project, ".git", "HEAD"),
+		"0123456789abcdef0123456789abcdef01234567\n",
+	);
+	await expect(page.locator("#gitBranchLabel")).toHaveText("0123456");
+	await expect(page.locator("#gitBranch")).toHaveAttribute("title", "Git branch: 0123456");
 });
 
 test("streams a reply with thinking, tools, markdown and copy", async () => {
@@ -145,9 +169,11 @@ test("streams a reply with thinking, tools, markdown and copy", async () => {
 	await expect(reasoning.locator(".work-label")).toHaveText(
 		"ユーザーの依頼を確認して、必要なツールを選びます。",
 	);
+	await expect(reasoning.locator(".work-tools use")).toHaveAttribute("href", "#i-spark");
 	expect(await reasoning.evaluate((node) => node.open)).toBe(false);
 	await reasoning.locator("summary").first().click();
 	await expect(reasoning).toContainText("必要なツール");
+	await expect(reasoning.locator(".work-item-head use")).toHaveAttribute("href", "#i-spark");
 
 	const work = groups.last();
 	await expect(work).toHaveAttribute("data-status", "done");
@@ -254,15 +280,16 @@ test("dedupes tool kinds and keeps consecutive work cards compact", async () => 
 
 	const groups = page.getByTestId("work-group");
 	await expect(groups).toHaveCount(2);
-	await expect(groups.first().locator(".work-tools use")).toHaveCount(1);
+	await expect(groups.first().locator(".work-tools use")).toHaveCount(2);
+	await expect(groups.first().locator(".work-tools")).toHaveAttribute(
+		"title",
+		"Thinking · Command",
+	);
 	const kinds = await groups
 		.last()
 		.locator(".work-tools use")
 		.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("href")));
-	expect(kinds).toHaveLength(2);
-	expect(new Set(kinds).size).toBe(2);
-	expect(kinds).toContain("#i-command");
-	expect(kinds).toContain("#i-read");
+	expect(kinds).toEqual(["#i-spark", "#i-command", "#i-read", "#i-globe"]);
 
 	const gap = await page.evaluate(() => {
 		const [first, second] = document.querySelectorAll(".message-list > .assistant");
@@ -286,6 +313,8 @@ test("uses reasoning, then tool names, then plain-thinking labels", async () => 
 		"Let me inspect the architecture first.",
 	);
 	await expect(reasoned.locator(".work-dot.done")).toHaveCount(2);
+	await expect(reasoned.locator(".work-tools use")).toHaveCount(2);
+	await expect(reasoned.locator(".work-tools use").first()).toHaveAttribute("href", "#i-spark");
 	await expect(reasoned.locator(".work-count, .work-meta")).toHaveCount(0);
 
 	await send("silent");
@@ -296,6 +325,7 @@ test("uses reasoning, then tool names, then plain-thinking labels", async () => 
 	const silent = page.getByTestId("work-group").last();
 	await expect(silent.locator(".work-label")).toHaveText("bash");
 	await expect(silent.locator(".work-dot.done")).toHaveCount(1);
+	await expect(silent.locator(".work-tools use")).toHaveAttribute("href", "#i-command");
 
 	await send("blankthink");
 	await expect(page.getByTestId("message-assistant").last()).toContainText(
@@ -305,6 +335,7 @@ test("uses reasoning, then tool names, then plain-thinking labels", async () => 
 	await expectDone();
 	const blank = page.getByTestId("work-group").last();
 	await expect(blank.locator(".work-label")).toHaveText("Thinking");
+	await expect(blank.locator(".work-tools use")).toHaveAttribute("href", "#i-spark");
 });
 
 test("keeps an open live work group stable while its heading streams", async () => {
@@ -709,38 +740,69 @@ test("shows, advances and clears the agent plan", async () => {
 	await expect(page.getByTestId("plan-item")).toHaveCount(0);
 });
 
-test("shows the plan note in the main screen without rebuilding the plan list", async () => {
+test("shows plan notes under the current step without rebuilding the plan list", async () => {
 	await send("plannote");
 	await expect(page.getByTestId("plan-item")).toHaveCount(5);
-	const progress = page.getByTestId("run-progress");
-	await expect(progress).toBeVisible({ timeout: 10_000 });
-	await expect(progress).toContainText("まずRPCとUIの現状を確認します。");
+	const current = page.locator('.plan-item[data-status="in_progress"]');
+	await expect(current).toContainText("既存機能との統合");
+	const notes = current.getByTestId("plan-note");
+	await expect(notes).toHaveCount(1, { timeout: 10_000 });
+	await expect(notes).toContainText("まずRPCとUIの現状を確認します。");
+	await expect(page.getByTestId("run-progress")).toHaveCount(0);
 
 	// A note-only plan update must not replace the list nodes.
 	const first = page.getByTestId("plan-item").first();
 	await first.evaluate((element) => {
 		element.dataset.reuseCheck = "kept";
 	});
-	await expect(progress).toContainText("復元分岐を修正中。次にテストを追加します。", {
-		timeout: 10_000,
-	});
+	await expect(notes).toHaveCount(2, { timeout: 10_000 });
+	await expect(notes.last()).toHaveText("復元分岐を修正中。次にテストを追加します。");
 	await expect(first).toHaveAttribute("data-reuse-check", "kept");
 	await expect(page.getByTestId("plan-item")).toHaveCount(5);
 
+	// Reload restores every note attached to its own step.
+	await page.reload();
+	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+	const restored = page.locator('.plan-item[data-status="in_progress"]').getByTestId("plan-note");
+	await expect(restored).toHaveCount(2);
+	await expect(restored.nth(1)).toHaveText("復元分岐を修正中。次にテストを追加します。");
+
 	await expectDone();
-	await expect(progress).toHaveCount(0);
+	// Notes stay under the step after the run finishes.
+	await expect(restored).toHaveCount(2);
 });
 
-test("shows a derived progress line after several tools", async () => {
+test("wraps long plan items next to the checkbox", async () => {
+	await send("plan wrap");
+	const item = page.getByTestId("plan-item").filter({ hasText: "折り返す動作を確認" });
+	await expect(item).toHaveAttribute("data-status", "in_progress");
+	await expectDone();
+
+	await page.locator("#planResizer").focus();
+	for (let index = 0; index < 10; index += 1) await page.keyboard.press("ArrowRight");
+	const box = await item.locator(".plan-box").boundingBox();
+	const text = await item.locator(".plan-text").boundingBox();
+	// The text starts on the checkbox row and wraps inside the remaining width.
+	expect(text.x).toBeGreaterThan(box.x + box.width);
+	expect(Math.abs(text.y - box.y)).toBeLessThan(6);
+	expect(text.height).toBeGreaterThan(30);
+});
+
+test("shows the latest tool next to the elapsed time", async () => {
 	await send("progress");
-	const progress = page.getByTestId("run-progress");
-	await expect(progress).toBeVisible({ timeout: 10_000 });
-	await expect(progress).toContainText("実行 echo progress");
+	const tool = page.getByTestId("run-tool");
+	await expect(tool).toBeVisible({ timeout: 10_000 });
+	await expect(tool).toContainText("実行 echo progress");
+	const elapsed = page.getByTestId("run-elapsed");
+	await expect(elapsed).toBeVisible();
+	const elapsedBox = await elapsed.boundingBox();
+	const toolBox = await tool.boundingBox();
+	expect(toolBox.x).toBeGreaterThan(elapsedBox.x);
 	await expectDone();
-	await expect(progress).toHaveCount(0);
+	await expect(tool).toHaveCount(0);
 });
 
-test("keeps the plan on the right and only shows the current plan", async () => {
+test("keeps the plan on the right and stacks a new plan below completed history", async () => {
 	const plan = page.locator("#planPanel");
 	await expect(plan).toBeVisible();
 	await expect(page.getByTestId("plan-item")).toHaveCount(0);
@@ -758,7 +820,7 @@ test("keeps the plan on the right and only shows the current plan", async () => 
 	}
 	await expect(page.locator(".plan-item.done")).toHaveCount(5);
 
-	// A completed plan stays visible until the agent replaces or clears it.
+	// A completed plan stays visible until a new plan is added or the log is cleared.
 	await send("hello");
 	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
 		timeout: 10_000,
@@ -772,10 +834,21 @@ test("keeps the plan on the right and only shows the current plan", async () => 
 	await expect(page.getByTestId("plan-item").last()).toHaveAttribute("data-status", "pending");
 	await expectDone();
 
-	// A new independent task replaces the plan.
+	// A new independent task keeps completed history, cancels the unfinished
+	// step with a strikethrough, and appends the new plan below it.
 	await send("plan start");
-	await expect(page.getByTestId("plan-item")).toHaveCount(5);
-	await expect(page.getByTestId("plan-item").last()).toHaveAttribute("data-status", "pending");
+	const items = page.getByTestId("plan-item");
+	await expect(items).toHaveCount(11);
+	for (let index = 0; index < 5; index += 1) {
+		await expect(items.nth(index)).toHaveAttribute("data-status", "done");
+	}
+	await expect(items.first()).toContainText("RPCの確認");
+	await expect(items.nth(5)).toHaveAttribute("data-status", "cancelled");
+	await expect(items.nth(5)).toContainText("追加の確認");
+	const current = page.locator('.plan-item[data-status="in_progress"]');
+	await expect(current).toHaveCount(1);
+	await expect(current).toContainText("既存機能との統合");
+	await expect(items.last()).toHaveAttribute("data-status", "pending");
 	await expectDone();
 });
 

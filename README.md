@@ -17,11 +17,11 @@ It is for people who like Pi in a terminal but want a calmer screen for long tas
 
 > Pi TinyChat is an independent community project. It is not an official Pi project and is not affiliated with the Pi maintainers.
 
-![Pi TinyChat screenshot](https://raw.githubusercontent.com/VarYUvrc/pi-tinychat/main/docs/images/pi-tinychat.png)
+![Pi TinyChat screenshot in light and dark themes](https://raw.githubusercontent.com/VarYUvrc/pi-tinychat/main/docs/images/pi-tinychat.png)
 
 ## What you get
 
-- **A plan you can glance at.** The agent publishes a checklist, and the right panel shows done, current, and pending items while it works. A short progress note in the user's language appears in the chat when the agent changes phase.
+- **A plan you can glance at.** The agent publishes a checklist, and the right panel shows done, current, and pending items while it works. Short progress notes in the user's language collect under the step they belong to and stay there.
 - **Context control you can actually feel.** Set auto-compaction at 25%, 50%, or 75% of the model window, or leave Pi's default. See the context ring and the exact reserve before the next long turn. Long-context models often get less precise well before the window is full, so 25–50% is a practical range. Open the ring to switch presets, or run `/compact` from the + menu to compact manually.
 - **Sessions that keep running.** Open another conversation without stopping the one in flight. Each session has its own Pi process.
 - **A conversation made for reading.** Streaming Markdown, compact thinking and tool cards, image attachments, and extension dialogs.
@@ -60,9 +60,9 @@ The npm package is published with the `pi-package` keyword, which is what the Pi
 
 ## The plan panel
 
-Pi TinyChat includes a small Pi extension that gives the agent a `tiny_plan` tool. For a multi-step task, the agent writes a short provisional plan before the first substantive tool call, then marks each step in progress and done as it goes. The plan keeps its current granularity; the agent uses a one-sentence `note` for the current focus between steps instead of adding micro-steps.
+Pi TinyChat includes a small Pi extension that gives the agent a `tiny_plan` tool. For a multi-step task, the agent writes a short provisional plan before the first substantive tool call, then marks each step in progress and done as it goes. Completed steps stay in the panel as a log; when a new request arrives, unfinished steps are kept with a strikethrough and the new plan is appended below. The plan keeps its current granularity; the agent uses a one-sentence `note` for the current focus between steps instead of adding micro-steps.
 
-The right panel mirrors that plan immediately and stores it in the Pi session, so reopening or resuming the conversation brings the checklist back. The note is shown as a live status line in the chat, while tool activity fills in the finer detail without extra model calls. It is the fastest way to see what the agent is doing, what is finished, and what is left.
+The right panel mirrors that plan immediately and stores it in the Pi session, so reopening or resuming the conversation brings the checklist back. Notes accumulate as bullets under the step where they were written and stay after it completes, and the running tool shows next to the elapsed time in the chat, so the panel explains what the agent is doing while the chat keeps the finer detail without extra model calls.
 
 ## Options
 

@@ -210,7 +210,7 @@ a:focus-visible {
 	align-items: center;
 	gap: 6px;
 	height: 30px;
-	padding-right: 30px;
+	padding-right: 8px;
 	min-width: 0;
 	font-size: 12.5px;
 	font-weight: 400;
@@ -234,6 +234,15 @@ a:focus-visible {
 	width: 15px;
 	height: 15px;
 	color: var(--text-3);
+}
+
+.branch {
+	padding-right: 8px;
+	max-width: 170px;
+}
+
+.branch .icon {
+	color: var(--accent);
 }
 
 .session {
@@ -621,10 +630,55 @@ body.resizing-plan * {
 
 .plan-item {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: flex-start;
 	gap: 8px;
 	line-height: 1.55;
 	color: var(--text-2);
+}
+
+.plan-text {
+	flex: 1 1 0;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.plan-notes {
+	flex-basis: 100%;
+	margin: 1px 0 0;
+	padding: 0 0 0 34px;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.plan-note {
+	position: relative;
+	font-size: 11.5px;
+	line-height: 1.45;
+	color: var(--text-3);
+	overflow-wrap: anywhere;
+	animation: plan-note-in 0.18s ease-out;
+}
+
+.plan-note::before {
+	content: "";
+	position: absolute;
+	left: -12px;
+	top: 0.62em;
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	background: currentColor;
+	opacity: 0.55;
+}
+
+@keyframes plan-note-in {
+	from {
+		opacity: 0;
+		transform: translateY(-2px);
+	}
 }
 
 .plan-box {
@@ -1378,29 +1432,35 @@ body.resizing-plan * {
 	display: flex;
 	align-items: center;
 	gap: 9px;
+	min-width: 0;
 	min-height: 20px;
 }
 
-.run-progress {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	min-width: 0;
-	font-size: 12px;
-	line-height: 1.45;
+.run-meta > .typing,
+.run-meta > .run-diff,
+.run-meta > .run-elapsed {
+	flex: none;
 }
 
-.run-progress[data-kind="note"] {
+.run-tool {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	padding-left: 9px;
+	border-left: 1px solid var(--line);
+	font-size: 11.5px;
 	color: var(--text-2);
 }
 
-.run-progress .icon {
+.run-tool .icon {
 	flex: none;
-	width: 14px;
-	height: 14px;
+	width: 13px;
+	height: 13px;
+	opacity: 0.85;
 }
 
-.run-progress-text {
+.run-tool-text {
 	min-width: 0;
 	overflow: hidden;
 	white-space: nowrap;
@@ -2749,6 +2809,10 @@ body.resizing-plan * {
 
 	.project {
 		max-width: 110px;
+	}
+
+	.branch {
+		max-width: 92px;
 	}
 
 	.session {

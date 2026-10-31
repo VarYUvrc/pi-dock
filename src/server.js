@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TinyChatError } from "./errors.js";
+import { GitBranchWatcher } from "./git.js";
 import { PiBridge } from "./pi.js";
 import { LiveState } from "./live.js";
 import { PLAN_STATE_ENTRY, PLAN_TOOL, normalizePlan, planFromEntries } from "./plan.js";
@@ -145,6 +146,9 @@ export async function createTinyChat({
 	let runtimeSequence = 0;
 	let closing = false;
 	let actualPort = port;
+	const branchWatcher = new GitBranchWatcher(cwd, (branch) => {
+		broadcast({ type: "tinychat:git", branch });
+	});
 
 	const sessionKey = (value) =>
 		process.platform === "win32" ? resolve(value).toLowerCase() : resolve(value);
@@ -453,6 +457,7 @@ export async function createTinyChat({
 		return {
 			runtime: runtime.id,
 			cwd,
+			gitBranch: await branchWatcher.refresh(),
 			state,
 			runStartedAt: runtime.runStartedAt,
 			live: runtime.live.snapshot(),
@@ -877,8 +882,10 @@ export async function createTinyChat({
 
 	try {
 		activateRuntime(await startRuntime({ initial: true }));
+		await branchWatcher.start();
 	} catch (error) {
 		clearInterval(heartbeat);
+		branchWatcher.close();
 		server.close();
 		throw error;
 	}
@@ -895,6 +902,7 @@ export async function createTinyChat({
 			if (closing) return;
 			closing = true;
 			clearInterval(heartbeat);
+			branchWatcher.close();
 			for (const client of clients) {
 				try {
 					client.end();

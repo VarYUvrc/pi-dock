@@ -61,6 +61,9 @@ export async function setupWorkspace() {
 		`--${project.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`,
 	);
 	await mkdir(project, { recursive: true });
+	// A tiny repository is enough for the topbar; HEAD is the only file read.
+	await mkdir(join(project, ".git", "refs", "heads"), { recursive: true });
+	await writeFile(join(project, ".git", "HEAD"), "ref: refs/heads/main\n");
 	await mkdir(sessions, { recursive: true });
 
 	const older = join(sessions, "2026-01-01T00-00-00-000Z_old.jsonl");
