@@ -169,9 +169,11 @@ test("streams a reply with thinking, tools, markdown and copy", async () => {
 	await expect(reasoning.locator(".work-label")).toHaveText(
 		"ユーザーの依頼を確認して、必要なツールを選びます。",
 	);
+	await expect(reasoning.locator(".work-tools use")).toHaveAttribute("href", "#i-spark");
 	expect(await reasoning.evaluate((node) => node.open)).toBe(false);
 	await reasoning.locator("summary").first().click();
 	await expect(reasoning).toContainText("必要なツール");
+	await expect(reasoning.locator(".work-item-head use")).toHaveAttribute("href", "#i-spark");
 
 	const work = groups.last();
 	await expect(work).toHaveAttribute("data-status", "done");
@@ -278,15 +280,16 @@ test("dedupes tool kinds and keeps consecutive work cards compact", async () => 
 
 	const groups = page.getByTestId("work-group");
 	await expect(groups).toHaveCount(2);
-	await expect(groups.first().locator(".work-tools use")).toHaveCount(1);
+	await expect(groups.first().locator(".work-tools use")).toHaveCount(2);
+	await expect(groups.first().locator(".work-tools")).toHaveAttribute(
+		"title",
+		"Thinking · Command",
+	);
 	const kinds = await groups
 		.last()
 		.locator(".work-tools use")
 		.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("href")));
-	expect(kinds).toHaveLength(2);
-	expect(new Set(kinds).size).toBe(2);
-	expect(kinds).toContain("#i-command");
-	expect(kinds).toContain("#i-read");
+	expect(kinds).toEqual(["#i-spark", "#i-command", "#i-read", "#i-globe"]);
 
 	const gap = await page.evaluate(() => {
 		const [first, second] = document.querySelectorAll(".message-list > .assistant");
@@ -310,6 +313,8 @@ test("uses reasoning, then tool names, then plain-thinking labels", async () => 
 		"Let me inspect the architecture first.",
 	);
 	await expect(reasoned.locator(".work-dot.done")).toHaveCount(2);
+	await expect(reasoned.locator(".work-tools use")).toHaveCount(2);
+	await expect(reasoned.locator(".work-tools use").first()).toHaveAttribute("href", "#i-spark");
 	await expect(reasoned.locator(".work-count, .work-meta")).toHaveCount(0);
 
 	await send("silent");
@@ -320,6 +325,7 @@ test("uses reasoning, then tool names, then plain-thinking labels", async () => 
 	const silent = page.getByTestId("work-group").last();
 	await expect(silent.locator(".work-label")).toHaveText("bash");
 	await expect(silent.locator(".work-dot.done")).toHaveCount(1);
+	await expect(silent.locator(".work-tools use")).toHaveAttribute("href", "#i-command");
 
 	await send("blankthink");
 	await expect(page.getByTestId("message-assistant").last()).toContainText(
@@ -329,6 +335,7 @@ test("uses reasoning, then tool names, then plain-thinking labels", async () => 
 	await expectDone();
 	const blank = page.getByTestId("work-group").last();
 	await expect(blank.locator(".work-label")).toHaveText("Thinking");
+	await expect(blank.locator(".work-tools use")).toHaveAttribute("href", "#i-spark");
 });
 
 test("keeps an open live work group stable while its heading streams", async () => {

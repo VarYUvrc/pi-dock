@@ -3136,7 +3136,8 @@ function toolKind(name) {
 	return "tool";
 }
 
-const TOOL_KIND_LABELS = {
+const WORK_KIND_LABELS = {
+	thinking: "Thinking",
 	read: "Read",
 	edit: "Edit",
 	write: "Write",
@@ -3150,9 +3151,18 @@ const TOOL_KIND_LABELS = {
 	tool: "Tool",
 };
 
-function workToolKinds(items) {
+function workKindIcon(kind) {
+	if (kind === "thinking") return "i-spark";
+	return `i-${kind === "web" ? "globe" : kind}`;
+}
+
+function workKinds(items) {
 	const seen = new Set();
 	const kinds = [];
+	if (items.some((item) => item.kind === "thinking")) {
+		seen.add("thinking");
+		kinds.push("thinking");
+	}
 	for (const item of items) {
 		if (item.kind !== "tool") continue;
 		const kind = toolKind(item.tool?.name);
@@ -3172,12 +3182,12 @@ function workMarkup(items, key, prefix) {
 	const rail = shown
 		.map((value) => `<i class="work-dot ${value}"></i>`)
 		.join("");
-	const kinds = workToolKinds(items);
+	const kinds = workKinds(items);
 	const tools = kinds.length
 		? `<span class="work-tools" title="${escapeHtml(
-				kinds.map((kind) => TOOL_KIND_LABELS[kind] ?? kind).join(" · "),
+				kinds.map((kind) => WORK_KIND_LABELS[kind] ?? kind).join(" · "),
 			)}" aria-hidden="true">${kinds
-				.map((kind) => `<svg class="icon"><use href="#i-${kind}"/></svg>`)
+				.map((kind) => `<svg class="icon"><use href="#${workKindIcon(kind)}"/></svg>`)
 				.join("")}</span>`
 		: "";
 	const body = items
@@ -3321,6 +3331,12 @@ function reuseLiveWork(oldMount, node) {
 		const oldRail = oldSummary?.querySelector(".work-rail");
 		const freshRail = freshSummary?.querySelector(".work-rail");
 		if (oldRail && freshRail) oldRail.innerHTML = freshRail.innerHTML;
+		const oldTools = oldSummary?.querySelector(".work-tools");
+		const freshTools = freshSummary?.querySelector(".work-tools");
+		if (oldTools && freshTools) oldTools.replaceWith(freshTools);
+		else if (oldSummary && freshTools)
+			oldSummary.insertBefore(freshTools, oldSummary.querySelector(".work-alert"));
+		else if (oldTools) oldTools.remove();
 		const oldAlert = oldSummary?.querySelector(".work-alert");
 		const freshAlert = freshSummary?.querySelector(".work-alert");
 		if (freshAlert && !oldAlert) {
@@ -3388,8 +3404,7 @@ function runToolLabel(tool) {
 }
 
 function runToolIcon(tool) {
-	const kind = toolKind(tool?.name);
-	return `i-${kind === "web" ? "globe" : kind}`;
+	return workKindIcon(toolKind(tool?.name));
 }
 
 
