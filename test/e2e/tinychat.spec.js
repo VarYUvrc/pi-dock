@@ -709,35 +709,50 @@ test("shows, advances and clears the agent plan", async () => {
 	await expect(page.getByTestId("plan-item")).toHaveCount(0);
 });
 
-test("shows the plan note in the main screen without rebuilding the plan list", async () => {
+test("shows plan notes under the current step without rebuilding the plan list", async () => {
 	await send("plannote");
 	await expect(page.getByTestId("plan-item")).toHaveCount(5);
-	const progress = page.getByTestId("run-progress");
-	await expect(progress).toBeVisible({ timeout: 10_000 });
-	await expect(progress).toContainText("まずRPCとUIの現状を確認します。");
+	const current = page.locator('.plan-item[data-status="in_progress"]');
+	await expect(current).toContainText("既存機能との統合");
+	const notes = current.getByTestId("plan-note");
+	await expect(notes).toHaveCount(1, { timeout: 10_000 });
+	await expect(notes).toContainText("まずRPCとUIの現状を確認します。");
+	await expect(page.getByTestId("run-progress")).toHaveCount(0);
 
 	// A note-only plan update must not replace the list nodes.
 	const first = page.getByTestId("plan-item").first();
 	await first.evaluate((element) => {
 		element.dataset.reuseCheck = "kept";
 	});
-	await expect(progress).toContainText("復元分岐を修正中。次にテストを追加します。", {
-		timeout: 10_000,
-	});
+	await expect(notes).toHaveCount(2, { timeout: 10_000 });
+	await expect(notes.last()).toHaveText("復元分岐を修正中。次にテストを追加します。");
 	await expect(first).toHaveAttribute("data-reuse-check", "kept");
 	await expect(page.getByTestId("plan-item")).toHaveCount(5);
 
+	// Reload restores only the latest note, attached to the current step.
+	await page.reload();
+	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
+	const restored = page.locator('.plan-item[data-status="in_progress"]').getByTestId("plan-note");
+	await expect(restored).toHaveCount(1);
+	await expect(restored).toHaveText("復元分岐を修正中。次にテストを追加します。");
+
 	await expectDone();
-	await expect(progress).toHaveCount(0);
+	// Notes stay under the step after the run finishes.
+	await expect(restored).toHaveText("復元分岐を修正中。次にテストを追加します。");
 });
 
-test("shows a derived progress line after several tools", async () => {
+test("shows the latest tool next to the elapsed time", async () => {
 	await send("progress");
-	const progress = page.getByTestId("run-progress");
-	await expect(progress).toBeVisible({ timeout: 10_000 });
-	await expect(progress).toContainText("実行 echo progress");
+	const tool = page.getByTestId("run-tool");
+	await expect(tool).toBeVisible({ timeout: 10_000 });
+	await expect(tool).toContainText("実行 echo progress");
+	const elapsed = page.getByTestId("run-elapsed");
+	await expect(elapsed).toBeVisible();
+	const elapsedBox = await elapsed.boundingBox();
+	const toolBox = await tool.boundingBox();
+	expect(toolBox.x).toBeGreaterThan(elapsedBox.x);
 	await expectDone();
-	await expect(progress).toHaveCount(0);
+	await expect(tool).toHaveCount(0);
 });
 
 test("keeps the plan on the right and only shows the current plan", async () => {
