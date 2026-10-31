@@ -118,7 +118,6 @@ const state = {
 	commands: [],
 	messages: [],
 	plan: null,
-	planNotes: [],
 	attachments: [],
 	live: null,
 	tools: {},
@@ -313,8 +312,6 @@ async function refreshSnapshot() {
 	state.levels = snapshot.levels?.length ? snapshot.levels : ["off"];
 	state.commands = snapshot.commands ?? [];
 	state.plan = settings.plan ? (snapshot.plan ?? null) : null;
-	state.planNotes = [];
-	recordPlanNote({ replace: true });
 	state.statuses =
 		snapshot.statuses && typeof snapshot.statuses === "object" ? { ...snapshot.statuses } : {};
 	state.widgets =
@@ -406,7 +403,6 @@ function handleRecord(record) {
 			state.live = null;
 			state.aborting = false;
 			state.pendingUser = null;
-			state.planNotes = [];
 			state.statuses = {};
 			state.widgets = {};
 			state.extensionTitle = "";
@@ -420,8 +416,6 @@ function handleRecord(record) {
 		case "tinychat:plan":
 			if (!settings.plan) return;
 			state.plan = record.plan ?? null;
-			prunePlanNotes();
-			recordPlanNote();
 			renderPlan();
 			renderRunStatus();
 			return;
@@ -435,7 +429,6 @@ function handleRecord(record) {
 			state.aborting = false;
 			state.retry = null;
 			state.diff = null;
-			state.planNotes = [];
 			runStatusSignature = "";
 			state.sendMode = "steer";
 			state.live = { blocks: [], tools: state.tools };
@@ -2416,7 +2409,6 @@ function closePlanDrawer() {
 function applyPlanSetting() {
 	if (!settings.plan) {
 		state.plan = null;
-		state.planNotes = [];
 		planDrawerOpen = false;
 	}
 	planSignature = "";
@@ -2745,35 +2737,10 @@ function planListSignature(plan) {
 	});
 }
 
-function planNoteText() {
-	return typeof state.plan?.note === "string" ? state.plan.note.replace(/\s+/g, " ").trim() : "";
-}
-
-/**
- * Notes are shown as sub-bullets under the step that was in progress when the
- * note arrived. Keep them when the step finishes, but drop them once the plan
- * no longer contains that step.
- */
-function prunePlanNotes() {
-	const items = Array.isArray(state.plan?.items) ? state.plan.items : [];
-	state.planNotes = state.planNotes.filter((entry) =>
-		items.some((item) => item.id === entry.itemId && item.text === entry.itemText),
-	);
-}
-
-function recordPlanNote({ replace = false } = {}) {
-	const text = planNoteText();
-	if (!text) return;
-	if (!replace && state.planNotes[state.planNotes.length - 1]?.text === text) return;
-	const items = Array.isArray(state.plan?.items) ? state.plan.items : [];
-	const item = items.find((entry) => entry.status === "in_progress") ?? items[items.length - 1];
-	if (!item) return;
-	const entry = { itemId: item.id, itemText: item.text, text };
-	state.planNotes = replace ? [entry] : [...state.planNotes, entry];
-}
-
 function planNotesFor(itemId) {
-	return state.planNotes.filter((entry) => entry.itemId === itemId).map((entry) => entry.text);
+	const items = Array.isArray(state.plan?.items) ? state.plan.items : [];
+	const item = items.find((entry) => entry.id === itemId);
+	return Array.isArray(item?.notes) ? item.notes : [];
 }
 
 function renderPlanNotes() {

@@ -753,16 +753,32 @@ test("shows plan notes under the current step without rebuilding the plan list",
 	await expect(first).toHaveAttribute("data-reuse-check", "kept");
 	await expect(page.getByTestId("plan-item")).toHaveCount(5);
 
-	// Reload restores only the latest note, attached to the current step.
+	// Reload restores every note attached to its own step.
 	await page.reload();
 	await expect(page.locator("#modelLabel")).toHaveText("Fake Fast");
 	const restored = page.locator('.plan-item[data-status="in_progress"]').getByTestId("plan-note");
-	await expect(restored).toHaveCount(1);
-	await expect(restored).toHaveText("復元分岐を修正中。次にテストを追加します。");
+	await expect(restored).toHaveCount(2);
+	await expect(restored.nth(1)).toHaveText("復元分岐を修正中。次にテストを追加します。");
 
 	await expectDone();
 	// Notes stay under the step after the run finishes.
-	await expect(restored).toHaveText("復元分岐を修正中。次にテストを追加します。");
+	await expect(restored).toHaveCount(2);
+});
+
+test("wraps long plan items next to the checkbox", async () => {
+	await send("plan wrap");
+	const item = page.getByTestId("plan-item").filter({ hasText: "折り返す動作を確認" });
+	await expect(item).toHaveAttribute("data-status", "in_progress");
+	await expectDone();
+
+	await page.locator("#planResizer").focus();
+	for (let index = 0; index < 10; index += 1) await page.keyboard.press("ArrowRight");
+	const box = await item.locator(".plan-box").boundingBox();
+	const text = await item.locator(".plan-text").boundingBox();
+	// The text starts on the checkbox row and wraps inside the remaining width.
+	expect(text.x).toBeGreaterThan(box.x + box.width);
+	expect(Math.abs(text.y - box.y)).toBeLessThan(6);
+	expect(text.height).toBeGreaterThan(30);
 });
 
 test("shows the latest tool next to the elapsed time", async () => {

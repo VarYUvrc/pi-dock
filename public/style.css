@@ -637,6 +637,12 @@ body.resizing-plan * {
 	color: var(--text-2);
 }
 
+.plan-text {
+	flex: 1 1 0;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
 .plan-notes {
 	flex-basis: 100%;
 	margin: 1px 0 0;

@@ -22,13 +22,13 @@ interface PlanItem {
 	id: string;
 	text: string;
 	status: PlanStatus;
+	notes?: string[];
 }
 
 interface PlanDetails {
 	title?: string;
 	items: PlanItem[];
 	nextId: number;
-	note?: string;
 	action: string;
 	error?: string;
 }
@@ -37,7 +37,6 @@ interface PlanState {
 	title?: string;
 	items: PlanItem[];
 	nextId: number;
-	note?: string;
 }
 
 const ItemParam = Type.Object({
@@ -60,7 +59,7 @@ const PlanParams = Type.Object({
 	note: Type.Optional(
 		Type.String({
 			description:
-				"One short progress sentence for the user, in their language. Shown in the main screen. Include with set/update at phase changes, or use action=note for a mid-step update.",
+				"One short progress sentence for the user, in their language. Appended under the step that is in progress in the plan panel. Include with set/update at phase changes, or use action=note for a mid-step update.",
 		}),
 	),
 });
@@ -72,11 +71,17 @@ const MARKS: Record<PlanStatus, string> = {
 	cancelled: "[-]",
 };
 
+function cloneItem(item: PlanItem): PlanItem {
+	return {
+		...item,
+		...(item.notes?.length ? { notes: [...item.notes] } : {}),
+	};
+}
+
 function clonePlan(plan: PlanState): PlanState {
 	return {
 		...(plan.title ? { title: plan.title } : {}),
-		...(plan.note ? { note: plan.note } : {}),
-		items: plan.items.map((item) => ({ ...item })),
+		items: plan.items.map(cloneItem),
 		nextId: plan.nextId,
 	};
 }
@@ -85,6 +90,30 @@ function normalizeNote(value: unknown): string | undefined {
 	if (typeof value !== "string") return undefined;
 	const note = value.replace(/\s+/g, " ").trim();
 	return note || undefined;
+}
+
+function normalizeNotes(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	const notes: string[] = [];
+	for (const raw of value) {
+		const note = normalizeNote(raw);
+		if (note) notes.push(note);
+	}
+	return notes;
+}
+
+/** Notes belong to a step: the active one, else the last one. */
+function noteTarget(items: PlanItem[]): PlanItem | undefined {
+	return items.find((item) => item.status === "in_progress") ?? items[items.length - 1];
+}
+
+/** Notes are append-only; once recorded they stay under the same step. */
+function appendNote(target: PlanItem | undefined, value: unknown) {
+	const note = normalizeNote(value);
+	if (!target || !note) return;
+	const notes = target.notes ?? [];
+	if (notes[notes.length - 1] === note) return;
+	target.notes = [...notes, note];
 }
 
 function formatPlan(plan: PlanState): string {
@@ -107,23 +136,26 @@ function planFromDetails(details: unknown): PlanState | null {
 		title?: unknown;
 		items?: unknown;
 		nextId?: unknown;
-		note?: unknown;
 	};
 	if (!Array.isArray(value.items)) return null;
 	const items: PlanItem[] = [];
 	for (const raw of value.items) {
 		if (!raw || typeof raw !== "object") continue;
-		const item = raw as { id?: unknown; text?: unknown; status?: unknown };
+		const item = raw as { id?: unknown; text?: unknown; status?: unknown; notes?: unknown };
 		if (typeof item.id !== "string" || typeof item.text !== "string") continue;
-		items.push({ id: item.id, text: item.text, status: validStatus(item.status) });
+		const notes = normalizeNotes(item.notes);
+		items.push({
+			id: item.id,
+			text: item.text,
+			status: validStatus(item.status),
+			...(notes.length ? { notes } : {}),
+		});
 	}
 	const plan: PlanState = {
 		items,
 		nextId: typeof value.nextId === "number" && value.nextId > 0 ? value.nextId : 1,
 	};
 	if (typeof value.title === "string" && value.title.trim()) plan.title = value.title.trim();
-	const note = normalizeNote(value.note);
-	if (note) plan.note = note;
 	return plan;
 }
 
@@ -161,7 +193,7 @@ export default function (pi: ExtensionAPI) {
 		name: "tiny_plan",
 		label: "Plan",
 		description:
-			"Track a multi-step implementation plan and the current focus. For any task that will need more than a few tool calls—including investigation, design, or debugging—call set with a short provisional plan before the first substantive tool call; include the steps you can foresee through final verification and refine the plan in place as you learn. Keep the current item granularity; do not split items into micro-steps. Then keep it current while working: when a step starts mark it in_progress, and as soon as it finishes mark it done and the next step in_progress. Never leave the first step in_progress during later work and never mark several steps done together at the end. Keep exactly one item in_progress. Include a one-sentence note in the user's language when you start or finish a step, and use action=note for a meaningful mid-step update; the note is shown under the current step in the plan panel, so do not repeat the plan or narrate every tool call. Use update for one item, add only for a genuinely new step discovered later, remove to delete one, and clear when finished. Reuse item ids. Continue the same plan through follow-up or steering messages. When the previous work is complete and a new independent task begins, call set to replace the old plan. Do not clear the plan just because a new user message arrived.",
+			"Track a multi-step implementation plan and the current focus. For any task that will need more than a few tool calls—including investigation, design, or debugging—call set with a short provisional plan before the first substantive tool call; include the steps you can foresee through final verification and refine the plan in place as you learn. Keep the current item granularity; do not split items into micro-steps. Then keep it current while working: when a step starts mark it in_progress, and as soon as it finishes mark it done and the next step in_progress. Never leave the first step in_progress during later work and never mark several steps done together at the end. Keep exactly one item in_progress. Include a one-sentence note in the user's language when you start or finish a step, and use action=note for a meaningful mid-step update; the note is appended under that step in the plan panel and stays there, so do not repeat the plan or narrate every tool call. Use update for one item, add only for a genuinely new step discovered later, remove to delete one, and clear when finished. Reuse item ids so earlier notes stay attached. Continue the same plan through follow-up or steering messages. When the previous work is complete and a new independent task begins, call set to replace the old plan. Do not clear the plan just because a new user message arrived.",
 		promptSnippet: "Track a multi-step plan, progress and the current focus",
 		promptGuidelines: [
 			"Before the first substantive tool call for a multi-step task, including investigation or design, create a short provisional plan in one tiny_plan set call.",
@@ -173,12 +205,6 @@ export default function (pi: ExtensionAPI) {
 
 		async execute(_toolCallId, params) {
 			const snapshot = () => clonePlan(plan);
-			const applyNote = (value: string | undefined) => {
-				if (value === undefined) return;
-				const note = normalizeNote(value);
-				if (note) plan.note = note;
-				else delete plan.note;
-			};
 			const fail = (message: string, action: string) => ({
 				content: [{ type: "text" as const, text: `Error: ${message}` }],
 				details: { ...snapshot(), action, error: message } as PlanDetails,
@@ -209,15 +235,15 @@ export default function (pi: ExtensionAPI) {
 							id,
 							text: text.trim(),
 							status: raw.status ?? current?.status ?? "pending",
+							...(current?.notes?.length ? { notes: [...current.notes] } : {}),
 						});
 					}
-					const note = normalizeNote(params.note);
 					plan = {
 						...(params.title?.trim() ? { title: params.title.trim() } : {}),
-						...(note ? { note } : {}),
 						items: next,
 						nextId,
 					};
+					appendNote(noteTarget(plan.items), params.note);
 					return result("set", formatPlan(plan));
 				}
 
@@ -235,7 +261,7 @@ export default function (pi: ExtensionAPI) {
 						status: params.status ?? "pending",
 					};
 					plan.items.push(item);
-					applyNote(params.note);
+					appendNote(noteTarget(plan.items), params.note);
 					return result("add", `Added ${item.id}: ${item.text}\n${formatPlan(plan)}`);
 				}
 
@@ -245,7 +271,7 @@ export default function (pi: ExtensionAPI) {
 					if (!item) return fail(`Item ${params.id} not found`, "update");
 					if (params.text?.trim()) item.text = params.text.trim();
 					if (params.status) item.status = params.status;
-					applyNote(params.note);
+					appendNote(item, params.note);
 					return result("update", formatPlan(plan));
 				}
 
@@ -254,7 +280,7 @@ export default function (pi: ExtensionAPI) {
 					const index = plan.items.findIndex((candidate) => candidate.id === params.id);
 					if (index === -1) return fail(`Item ${params.id} not found`, "remove");
 					plan.items.splice(index, 1);
-					applyNote(params.note);
+					appendNote(noteTarget(plan.items), params.note);
 					return result("remove", formatPlan(plan));
 				}
 
@@ -266,7 +292,9 @@ export default function (pi: ExtensionAPI) {
 				case "note": {
 					const note = normalizeNote(params.note);
 					if (!note) return fail("note required for note", "note");
-					plan.note = note;
+					const target = noteTarget(plan.items);
+					if (!target) return fail("Create the plan first with action=set, then add notes", "note");
+					appendNote(target, note);
 					return result("note", `Note: ${note}`);
 				}
 

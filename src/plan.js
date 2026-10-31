@@ -7,11 +7,23 @@ const LEGACY_PLAN_STATE_ENTRY = "dock_plan_state";
 
 /** @typedef {import("./pi-types.js").PiSessionEntry} PiSessionEntry */
 /** @typedef {"pending" | "in_progress" | "done" | "cancelled"} PlanItemStatus */
-/** @typedef {{ id: string, text: string, status: PlanItemStatus }} PlanItem */
-/** @typedef {{ title: string, items: PlanItem[], note?: string }} Plan */
-/** @typedef {{ title?: unknown, items?: unknown, note?: unknown }} PlanDetails */
+/** @typedef {{ id: string, text: string, status: PlanItemStatus, notes?: string[] }} PlanItem */
+/** @typedef {{ title: string, items: PlanItem[] }} Plan */
+/** @typedef {{ title?: unknown, items?: unknown }} PlanDetails */
 
 const STATUSES = new Set(["pending", "in_progress", "done", "cancelled"]);
+
+/** @param {unknown} value @returns {string[]} */
+function normalizeNotes(value) {
+	if (!Array.isArray(value)) return [];
+	const notes = [];
+	for (const raw of value) {
+		if (typeof raw !== "string") continue;
+		const note = raw.replace(/\s+/g, " ").trim();
+		if (note) notes.push(note);
+	}
+	return notes;
+}
 
 /**
  * Normalise the `details` payload of a tiny_plan tool result.
@@ -27,16 +39,17 @@ export function normalizePlan(details) {
 	for (const item of plan.items) {
 		if (!item || typeof item !== "object") continue;
 		if (typeof item.id !== "string" || typeof item.text !== "string") continue;
+		const notes = normalizeNotes(item.notes);
 		items.push({
 			id: item.id,
 			text: item.text,
 			status: STATUSES.has(item.status) ? item.status : "pending",
+			...(notes.length ? { notes } : {}),
 		});
 	}
 	const title =
 		typeof plan.title === "string" && plan.title.trim() ? plan.title.trim() : "";
-	const note = typeof plan.note === "string" ? plan.note.replace(/\s+/g, " ").trim() : "";
-	return { title, items, ...(note ? { note } : {}) };
+	return { title, items };
 }
 
 /** @param {PiSessionEntry} entry */

@@ -251,7 +251,7 @@ function pushPlanEntry(plan) {
 	const entry = pushEntry({
 		type: "custom",
 		customType: "tiny_plan_state",
-		data: { ...plan, items: plan.items.map((item) => ({ ...item })) },
+		data: { ...plan, items: cloneItems(plan.items) },
 	});
 	write({ type: "entry_appended", entry });
 }
@@ -267,47 +267,70 @@ function normalizeNote(value) {
 	return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 }
 
+function cloneItems(items) {
+	return (items ?? []).map((item) => ({
+		...item,
+		...(item.notes?.length ? { notes: [...item.notes] } : {}),
+	}));
+}
+
+function noteTarget(items) {
+	return items.find((item) => item.status === "in_progress") ?? items.at(-1);
+}
+
+function appendNote(target, value) {
+	const note = normalizeNote(value);
+	if (!target || !note) return;
+	const notes = target.notes ?? [];
+	if (notes.at(-1) === note) return;
+	target.notes = [...notes, note];
+}
+
 /**
  * @param {any} args
  * @returns {PiToolOutput}
  */
 function applyPlan(args) {
 	const existing = new Map((session.plan?.items ?? []).map((item) => [item.id, item]));
-	let items = (session.plan?.items ?? []).map((item) => ({ ...item }));
+	let items = cloneItems(session.plan?.items);
 	let nextId = session.plan?.nextId ?? 1;
 	let title = session.plan?.title;
-	let note = session.plan?.note;
 	if (args.action === "set") {
 		items = [];
 		for (const raw of args.items ?? []) {
 			const current = raw.id ? existing.get(raw.id) : undefined;
 			const text = raw.text ?? current?.text;
 			const id = current ? current.id : `p${nextId++}`;
-			items.push({ id, text, status: raw.status ?? current?.status ?? "pending" });
+			items.push({
+				id,
+				text,
+				status: raw.status ?? current?.status ?? "pending",
+				...(current?.notes?.length ? { notes: [...current.notes] } : {}),
+			});
 		}
 		title = args.title;
-		note = normalizeNote(args.note) || undefined;
+		appendNote(noteTarget(items), args.note);
 	} else if (args.action === "add") {
 		items.push({ id: `p${nextId++}`, text: args.text, status: args.status ?? "pending" });
-		if (args.note !== undefined) note = normalizeNote(args.note) || undefined;
+		appendNote(noteTarget(items), args.note);
 	} else if (args.action === "update") {
 		const item = items.find((candidate) => candidate.id === args.id);
 		if (item) {
 			if (args.text) item.text = args.text;
 			if (args.status) item.status = args.status;
+			appendNote(item, args.note);
 		}
-		if (args.note !== undefined) note = normalizeNote(args.note) || undefined;
 	} else if (args.action === "remove") {
 		items = items.filter((item) => item.id !== args.id);
+		appendNote(noteTarget(items), args.note);
 	} else if (args.action === "clear") {
 		items = [];
 		nextId = 1;
 		title = undefined;
-		note = undefined;
 	} else if (args.action === "note") {
-		note = normalizeNote(args.note) || undefined;
+		appendNote(noteTarget(items), args.note);
 	}
-	session.plan = { ...(title ? { title } : {}), ...(note ? { note } : {}), items, nextId };
+	session.plan = { ...(title ? { title } : {}), items, nextId };
 	pushPlanEntry(session.plan);
 	return {
 		content: [{ type: "text", text: formatPlan(session.plan) }],
@@ -537,6 +560,17 @@ async function planPrompt(message) {
 		args = { action: "set", title: current?.title ?? "実装計画", items };
 	} else if (message.includes("continue")) {
 		args = { action: "add", text: "追加の確認", status: "pending" };
+	} else if (message.includes("wrap")) {
+		args = {
+			action: "set",
+			title: "長い文言の確認",
+			items: [
+				{
+					text: "チェックボックスの右隣からテキストを書き始め、幅が足りなければ折り返す動作を確認するための長い項目です。",
+					status: "in_progress",
+				},
+			],
+		};
 	} else if (message.includes("english")) {
 		args = {
 			action: "set",
