@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createTinyChat } from "../src/server.js";
 import { locatePi } from "../src/pi-path.js";
@@ -37,27 +37,51 @@ function parseArgs(argv) {
 	return options;
 }
 
-function openBrowser(url) {
-	const platform = process.platform;
-	/** @type {[string, string[]]} */
-	const command =
-		platform === "win32"
-			? ["cmd", ["/c", "start", "", url]]
-			: platform === "darwin"
-				? ["open", [url]]
-				: ["xdg-open", [url]];
+function isWsl() {
+	if (process.platform !== "linux") return false;
+	if (process.env.WSL_DISTRO_NAME) return true;
 	try {
-		const child = spawn(command[0], command[1], {
+		return /microsoft/i.test(readFileSync("/proc/version", "utf8"));
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Browser openers to try in order: [command, args].
+ * @returns {Array<[string, string[]]>}
+ */
+function browserCommands(url) {
+	if (process.platform === "win32") return [["cmd", ["/c", "start", "", url]]];
+	if (process.platform === "darwin") return [["open", [url]]];
+	// Under WSL the Windows browser must receive the full launch URL: editor port
+	// forwarding popups open the bare address, which the server rejects.
+	if (isWsl())
+		return [
+			["cmd.exe", ["/c", "start", "", url]],
+			["xdg-open", [url]],
+		];
+	return [["xdg-open", [url]]];
+}
+
+function openBrowser(url, index = 0) {
+	const commands = browserCommands(url);
+	const [command, args] = commands[index];
+	const fallback = () => {
+		if (index + 1 < commands.length) openBrowser(url, index + 1);
+	};
+	try {
+		const child = spawn(command, args, {
 			stdio: "ignore",
 			detached: true,
 			windowsHide: true,
 		});
 		// A missing opener (WSL/containers without xdg-open) only shows up as an
 		// async error event; the URL is already printed, so keep the server alive.
-		child.on("error", () => {});
+		child.on("error", fallback);
 		child.unref();
 	} catch {
-		/* the URL is printed anyway */
+		fallback();
 	}
 }
 

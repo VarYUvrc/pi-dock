@@ -47,6 +47,8 @@ pi-tinychat
 
 The browser opens at `http://127.0.0.1:4310`. If that port is taken, Pi TinyChat automatically uses the next free port. Use `--port` to start from another port, and `--no-open` when you do not want the browser to open automatically.
 
+Under WSL the URL opens in your Windows browser. Port-forwarding popups from editors open the bare address without the launch token and are rejected, so use the URL printed in the terminal.
+
 Authenticate once in a terminal; Pi TinyChat reuses that login:
 
 ```bash
