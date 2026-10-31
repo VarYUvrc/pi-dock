@@ -134,6 +134,27 @@ npm run check                 # lint、型、i18n、E2E、tarball 検査
 
 個別のチェックと実モデル用の手動スモークは `package.json` に定義しています。CI は Ubuntu / Windows の Node 22.19 で実行し、週次で最新 Pi との互換性を確認します。
 
+## リリース
+
+リリースは GitHub Actions から公開するため、ローカルでの `npm login` や `npm publish` は不要です。
+
+1. `package.json` の `version` を上げ、開発ブランチでコミットして pull request 経由でマージします（`main` は保護されています）。
+2. マージ後のコミットにタグを付け、push します。
+
+   ```bash
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+
+3. そのタグで GitHub Release を作成して公開します。公開すると `.github/workflows/publish.yml` が起動します。draft のままでは起動せず、`workflow_dispatch` はタグ検証を省略して現在の `main` を公開します。
+4. ワークフローはタグと `package.json` の一致を検証し、テストと `prepublishOnly` のチェックを実行してから、npm Trusted Publishing（OIDC）で `npm publish --provenance --access public` を実行します。`NPM_TOKEN` は保存しません。
+5. 公開されたバージョンを確認します。
+
+   ```bash
+   gh run watch
+   npm view pi-tinychat version
+   ```
+
 ## ライセンス
 
 [MIT](https://github.com/VarYUvrc/pi-tinychat/blob/main/LICENSE)
