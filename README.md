@@ -134,6 +134,27 @@ npm run check                 # lint, types, i18n, E2E, tarball check
 
 Individual checks and the manual real-model smoke test are defined in `package.json`. CI runs on Node 22.19 on Ubuntu and Windows, with a weekly check against the latest Pi.
 
+## Releasing
+
+Releases are published from GitHub Actions, so no local `npm login` or `npm publish` is needed.
+
+1. Bump `version` in `package.json`, commit it on a development branch, and merge through a pull request. `main` is protected.
+2. Tag the merged commit and push the tag:
+
+   ```bash
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+
+3. Create and publish a GitHub Release for that tag. Publishing starts `.github/workflows/publish.yml`. A draft release does not trigger it; `workflow_dispatch` skips the tag check and publishes the current `main`.
+4. The workflow verifies that the tag matches `package.json`, runs the tests and the `prepublishOnly` checks, then runs `npm publish --provenance --access public` through npm Trusted Publishing (OIDC). No `NPM_TOKEN` is stored.
+5. Confirm the published version:
+
+   ```bash
+   gh run watch
+   npm view pi-tinychat version
+   ```
+
 ## License
 
 [MIT](https://github.com/VarYUvrc/pi-tinychat/blob/main/LICENSE)
