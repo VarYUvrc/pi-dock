@@ -60,7 +60,7 @@ The npm package is published with the `pi-package` keyword, which is what the Pi
 
 ## The plan panel
 
-Pi TinyChat includes a small Pi extension that gives the agent a `tiny_plan` tool. For a multi-step task, the agent writes a short provisional plan before the first substantive tool call, then marks each step in progress and done as it goes. The plan keeps its current granularity; the agent uses a one-sentence `note` for the current focus between steps instead of adding micro-steps.
+Pi TinyChat includes a small Pi extension that gives the agent a `tiny_plan` tool. For a multi-step task, the agent writes a short provisional plan before the first substantive tool call, then marks each step in progress and done as it goes. Completed steps stay in the panel as a log; when a new request arrives, unfinished steps are kept with a strikethrough and the new plan is appended below. The plan keeps its current granularity; the agent uses a one-sentence `note` for the current focus between steps instead of adding micro-steps.
 
 The right panel mirrors that plan immediately and stores it in the Pi session, so reopening or resuming the conversation brings the checklist back. Notes accumulate as bullets under the step where they were written and stay after it completes, and the running tool shows next to the elapsed time in the chat, so the panel explains what the agent is doing while the chat keeps the finer detail without extra model calls.
 

@@ -2728,6 +2728,7 @@ function scheduleLive(immediate = false) {
 
 
 let previousPlanStatuses = new Map();
+let previousPlanFocus = "";
 
 function planListSignature(plan) {
 	const items = Array.isArray(plan?.items) ? plan.items : [];
@@ -2779,6 +2780,7 @@ function renderPlanNotes() {
 function renderPlan() {
 	if (!settings.plan) {
 		previousPlanStatuses = new Map();
+		previousPlanFocus = "";
 		planSignature = "";
 		dom.planItems.replaceChildren();
 		dom.planPanel.classList.remove("has-plan");
@@ -2795,6 +2797,7 @@ function renderPlan() {
 	dom.planTitle.textContent = hasPlan ? plan.title || "Plan" : "Plan";
 	if (!hasPlan) {
 		previousPlanStatuses = new Map();
+		previousPlanFocus = "";
 		planSignature = "";
 		dom.planItems.replaceChildren();
 		return;
@@ -2835,8 +2838,16 @@ function renderPlan() {
 		entry.append(box, text);
 		return entry;
 	});
+	const focus = items.find((item) => item.status === "in_progress") ?? items[items.length - 1];
+	const focusKey = focus ? `${focus.id}:${focus.status}` : "";
+	const focusChanged = focusKey !== previousPlanFocus;
+	previousPlanFocus = focusKey;
 	dom.planItems.replaceChildren(...nodes);
 	renderPlanNotes();
+	if (focusChanged && focus) {
+		// The plan is a log now; keep the current step visible as it grows.
+		nodes.find((node) => node.dataset.planId === focus.id)?.scrollIntoView({ block: "nearest" });
+	}
 }
 
 function messageRevision(message, ctx) {

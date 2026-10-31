@@ -291,24 +291,50 @@ function appendNote(target, value) {
  * @returns {PiToolOutput}
  */
 function applyPlan(args) {
-	const existing = new Map((session.plan?.items ?? []).map((item) => [item.id, item]));
 	let items = cloneItems(session.plan?.items);
 	let nextId = session.plan?.nextId ?? 1;
 	let title = session.plan?.title;
 	if (args.action === "set") {
-		items = [];
-		for (const raw of args.items ?? []) {
-			const current = raw.id ? existing.get(raw.id) : undefined;
-			const text = raw.text ?? current?.text;
-			const id = current ? current.id : `p${nextId++}`;
-			items.push({
-				id,
-				text,
-				status: raw.status ?? current?.status ?? "pending",
-				...(current?.notes?.length ? { notes: [...current.notes] } : {}),
-			});
+		const byId = new Map(items.map((item) => [item.id, item]));
+		const incoming = args.items ?? [];
+		const referenced = new Set();
+		for (const raw of incoming) {
+			const id = typeof raw.id === "string" ? raw.id.trim() : "";
+			if (id && byId.has(id)) referenced.add(id);
 		}
-		title = args.title;
+		for (const item of items) {
+			if (
+				(item.status === "pending" || item.status === "in_progress") &&
+				!referenced.has(item.id)
+			) {
+				item.status = "cancelled";
+			}
+		}
+		const seen = new Set();
+		for (const raw of incoming) {
+			const requestedId = typeof raw.id === "string" ? raw.id.trim() : "";
+			if (requestedId) {
+				if (seen.has(requestedId)) continue;
+				seen.add(requestedId);
+			}
+			const current = requestedId ? byId.get(requestedId) : undefined;
+			const text = raw.text ?? current?.text;
+			if (!text) continue;
+			if (current) {
+				current.text = text;
+				if (raw.status) current.status = raw.status;
+				continue;
+			}
+			let id = requestedId;
+			if (!id) {
+				while (items.some((item) => item.id === `p${nextId}`)) nextId++;
+				id = `p${nextId++}`;
+			}
+			const item = { id, text, status: raw.status ?? "pending" };
+			items.push(item);
+			byId.set(id, item);
+		}
+		title = args.title ?? title;
 		appendNote(noteTarget(items), args.note);
 	} else if (args.action === "add") {
 		items.push({ id: `p${nextId++}`, text: args.text, status: args.status ?? "pending" });

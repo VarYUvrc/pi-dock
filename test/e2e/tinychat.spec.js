@@ -795,7 +795,7 @@ test("shows the latest tool next to the elapsed time", async () => {
 	await expect(tool).toHaveCount(0);
 });
 
-test("keeps the plan on the right and only shows the current plan", async () => {
+test("keeps the plan on the right and stacks a new plan below completed history", async () => {
 	const plan = page.locator("#planPanel");
 	await expect(plan).toBeVisible();
 	await expect(page.getByTestId("plan-item")).toHaveCount(0);
@@ -813,7 +813,7 @@ test("keeps the plan on the right and only shows the current plan", async () => 
 	}
 	await expect(page.locator(".plan-item.done")).toHaveCount(5);
 
-	// A completed plan stays visible until the agent replaces or clears it.
+	// A completed plan stays visible until a new plan is added or the log is cleared.
 	await send("hello");
 	await expect(page.getByTestId("message-assistant").last()).toContainText("結果", {
 		timeout: 10_000,
@@ -827,10 +827,21 @@ test("keeps the plan on the right and only shows the current plan", async () => 
 	await expect(page.getByTestId("plan-item").last()).toHaveAttribute("data-status", "pending");
 	await expectDone();
 
-	// A new independent task replaces the plan.
+	// A new independent task keeps completed history, cancels the unfinished
+	// step with a strikethrough, and appends the new plan below it.
 	await send("plan start");
-	await expect(page.getByTestId("plan-item")).toHaveCount(5);
-	await expect(page.getByTestId("plan-item").last()).toHaveAttribute("data-status", "pending");
+	const items = page.getByTestId("plan-item");
+	await expect(items).toHaveCount(11);
+	for (let index = 0; index < 5; index += 1) {
+		await expect(items.nth(index)).toHaveAttribute("data-status", "done");
+	}
+	await expect(items.first()).toContainText("RPCの確認");
+	await expect(items.nth(5)).toHaveAttribute("data-status", "cancelled");
+	await expect(items.nth(5)).toContainText("追加の確認");
+	const current = page.locator('.plan-item[data-status="in_progress"]');
+	await expect(current).toHaveCount(1);
+	await expect(current).toContainText("既存機能との統合");
+	await expect(items.last()).toHaveAttribute("data-status", "pending");
 	await expectDone();
 });
 

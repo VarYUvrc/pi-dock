@@ -237,12 +237,13 @@ export default function (pi: ExtensionAPI) {
 		name: "tiny_plan",
 		label: "Plan",
 		description:
-			"Track a multi-step implementation plan and the current focus. For any task that will need more than a few tool calls—including investigation, design, or debugging—call set with a short provisional plan before the first substantive tool call; include the steps you can foresee through final verification and refine the plan in place as you learn. Keep the current item granularity; do not split items into micro-steps. Then keep it current while working: when a step starts mark it in_progress, and as soon as it finishes mark it done and the next step in_progress. Use action=advance to finish the in-progress step and start the next pending step in one call. Never leave the first step in_progress during later work and never mark several steps done together at the end. Keep exactly one item in_progress. Include a one-sentence note in the user's language when you start or finish a step, and use action=note for a meaningful mid-step update; the note is appended under that step in the plan panel and stays there, so do not repeat the plan or narrate every tool call. Use update for one item, add only for a genuinely new step discovered later, remove to delete one, and clear when finished. Reuse item ids so earlier notes stay attached. Continue the same plan through follow-up or steering messages. When the previous work is complete and a new independent task begins, call set to replace the old plan. Do not clear the plan just because a new user message arrived.",
+			"Track a multi-step implementation plan and the current focus. For any task that will need more than a few tool calls—including investigation, design, or debugging—call set with a short provisional plan before the first substantive tool call; include the steps you can foresee through final verification and refine the plan in place as you learn. Keep the current item granularity; do not split items into micro-steps. Then keep it current while working: when a step starts mark it in_progress, and as soon as it finishes mark it done and the next step in_progress. Use action=advance to finish the in-progress step and start the next pending step in one call. Never leave the first step in_progress during later work and never mark several steps done together at the end. Keep exactly one item in_progress. Include a one-sentence note in the user's language when you start or finish a step, and use action=note for a meaningful mid-step update; the note is appended under that step in the plan panel and stays there, so do not repeat the plan or narrate every tool call. Use update for one item, add only for a genuinely new step discovered later, remove only for an item added by mistake, and clear only to reset the whole log. Reuse existing ids to revise the current plan; a set without those ids keeps completed and cancelled steps as history, cancels unfinished steps it does not reference, and appends the new plan below. When a new independent task begins, call set with fresh items instead of clearing. Do not clear the plan just because a new user message arrived.",
 		promptSnippet: "Track a multi-step plan, progress and the current focus",
 		promptGuidelines: [
 			"Before the first substantive tool call for a multi-step task, including investigation or design, create a short provisional plan in one tiny_plan set call.",
 			"Update tiny_plan immediately when a step starts or finishes; prefer one action=advance call at a phase boundary and never batch completed steps into the final call.",
 			"Include a one-sentence note in the user's language at phase changes; use action=note for a mid-step update and keep it brief.",
+			"On a new request, call set with the new plan; completed steps stay as history and superseded unfinished steps become cancelled. Do not clear the log.",
 		],
 		executionMode: "sequential",
 		parameters: PlanParams,
@@ -267,29 +268,63 @@ export default function (pi: ExtensionAPI) {
 			switch (params.action) {
 				case "set": {
 					const incoming = params.items ?? [];
-					const existing = new Map(plan.items.map((item) => [item.id, item]));
-					const next: PlanItem[] = [];
+					const items = plan.items.map(cloneItem);
+					const byId = new Map(items.map((item) => [item.id, item]));
+					const referenced = new Set<string>();
+					for (const raw of incoming) {
+						const id = raw.id?.trim();
+						if (id && byId.has(id)) referenced.add(id);
+					}
+					// Keep the log: a new plan supersedes unfinished steps instead of
+					// deleting them, so they stay visible with a strikethrough.
+					for (const item of items) {
+						if (
+							(item.status === "pending" || item.status === "in_progress") &&
+							!referenced.has(item.id)
+						) {
+							item.status = "cancelled";
+						}
+					}
 					let nextId = plan.nextId;
 					const seen = new Set<string>();
 					for (const raw of incoming) {
 						const requestedId = raw.id?.trim();
-						const current = requestedId ? existing.get(requestedId) : undefined;
+						if (requestedId && seen.has(requestedId)) {
+							return fail(`Duplicate item id: ${requestedId}`, "set");
+						}
+						const current = requestedId ? byId.get(requestedId) : undefined;
 						const text = raw.text ?? current?.text;
 						if (!text || !text.trim()) return fail("Every item needs text", "set");
-						const id = requestedId || `p${nextId++}`;
+						if (current) {
+							if (requestedId) seen.add(requestedId);
+							current.text = text.trim();
+							if (raw.status) current.status = raw.status;
+							continue;
+						}
+						let id = requestedId;
+						if (!id) {
+							const allocated = allocateId(items, nextId);
+							id = allocated.id;
+							nextId = allocated.nextId;
+						}
 						if (seen.has(id)) return fail(`Duplicate item id: ${id}`, "set");
 						seen.add(id);
-						next.push({
+						const item: PlanItem = {
 							id,
 							text: text.trim(),
-							status: raw.status ?? current?.status ?? "pending",
-							...(current?.notes?.length ? { notes: [...current.notes] } : {}),
-						});
+							status: raw.status ?? "pending",
+						};
+						items.push(item);
+						byId.set(id, item);
 					}
-					nextId = bumpNextId(next, nextId);
+					nextId = bumpNextId(items, nextId);
 					plan = {
-						...(params.title?.trim() ? { title: params.title.trim() } : {}),
-						items: next,
+						...(params.title?.trim()
+							? { title: params.title.trim() }
+							: plan.title
+								? { title: plan.title }
+								: {}),
+						items,
 						nextId,
 					};
 					appendNote(noteTarget(plan.items), params.note);
