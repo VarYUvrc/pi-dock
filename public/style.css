@@ -210,7 +210,7 @@ a:focus-visible {
 	align-items: center;
 	gap: 6px;
 	height: 30px;
-	padding-right: 30px;
+	padding-right: 8px;
 	min-width: 0;
 	font-size: 12.5px;
 	font-weight: 400;
@@ -234,6 +234,15 @@ a:focus-visible {
 	width: 15px;
 	height: 15px;
 	color: var(--text-3);
+}
+
+.branch {
+	padding-right: 8px;
+	max-width: 170px;
+}
+
+.branch .icon {
+	color: var(--accent);
 }
 
 .session {
@@ -2794,6 +2803,10 @@ body.resizing-plan * {
 
 	.project {
 		max-width: 110px;
+	}
+
+	.branch {
+		max-width: 92px;
 	}
 
 	.session {

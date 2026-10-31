@@ -52,6 +52,8 @@ const dom = {
 	jumpButton: $("jumpButton"),
 	projectName: $("projectName"),
 	projectLabel: $("projectLabel"),
+	gitBranch: $("gitBranch"),
+	gitBranchLabel: $("gitBranchLabel"),
 	sessionName: $("sessionName"),
 	modelButton: $("modelButton"),
 	modelLabel: $("modelLabel"),
@@ -106,6 +108,7 @@ const state = {
 	diff: null,
 	cwd: "",
 	runtimeId: "",
+	gitBranch: "",
 	sessionName: "",
 	sessionId: "",
 	model: null,
@@ -288,6 +291,7 @@ async function refreshSnapshot() {
 	statsGeneration += 1;
 	state.runtimeId = snapshot.runtime ?? "";
 	state.cwd = snapshot.cwd ?? "";
+	state.gitBranch = snapshot.gitBranch ?? "";
 	state.sessionState = snapshot.state ?? null;
 	state.model = snapshot.state?.model ?? null;
 	state.thinkingLevel = snapshot.state?.thinkingLevel ?? "off";
@@ -367,6 +371,10 @@ function handleRecord(record) {
 	}
 	switch (record.type) {
 		case "tinychat:hello":
+			return;
+		case "tinychat:git":
+			state.gitBranch = record.branch ?? "";
+			renderChrome();
 			return;
 		case "tinychat:runtime": {
 			const info = record.runtime;
@@ -3476,6 +3484,9 @@ function renderChrome() {
 	dom.projectLabel.textContent = project;
 	dom.projectName.hidden = !project;
 	dom.projectName.title = state.cwd;
+	dom.gitBranchLabel.textContent = state.gitBranch;
+	dom.gitBranch.hidden = !state.gitBranch;
+	dom.gitBranch.title = state.gitBranch ? `Git branch: ${state.gitBranch}` : "";
 	dom.sessionName.textContent = state.sessionName;
 	dom.sessionName.title = state.sessionName;
 	dom.modelLabel.textContent = state.model?.name ?? "Model";

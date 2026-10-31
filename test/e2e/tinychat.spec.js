@@ -65,7 +65,11 @@ test("loads the shell and enforces the token", async () => {
 	await expect(page.locator(".brand")).toContainText("Pi TinyChat");
 	await expect(page.locator("#projectName")).toHaveText("project");
 	await expect(page.locator("#projectName .icon use")).toHaveAttribute("href", "#i-folder");
-	await expect(page.locator(".top-actions > #projectName + #modelGroup")).toHaveCount(1);
+	await expect(page.locator("#gitBranch")).toHaveText("main");
+	await expect(page.locator("#gitBranch .icon use")).toHaveAttribute("href", "#i-branch");
+	await expect(page.locator(".top-actions > #projectName + #gitBranch + #modelGroup")).toHaveCount(
+		1,
+	);
 	await expect(page.locator("#modelGroup > #modelButton + #thinkingButton")).toHaveCount(1);
 	await expect(page.locator("#composer")).toBeVisible();
 	await expect(page.getByTestId("message-user")).toHaveCount(0);
@@ -103,6 +107,7 @@ test("loads the shell and enforces the token", async () => {
 		};
 		const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
 		const project = rect("#projectLabel");
+		const branch = rect("#gitBranchLabel");
 		const model = rect("#modelLabel");
 		const thinking = rect("#thinkingLabel");
 		return {
@@ -112,7 +117,8 @@ test("loads the shell and enforces the token", async () => {
 			groupStyle: style("#modelGroup"),
 			iconWidth: rect("#projectName .icon").width,
 			chevrons: document.querySelectorAll("#modelGroup .chip > .chev").length,
-			projectToModel: model.left - project.right,
+			projectToBranch: branch.left - project.right,
+			branchToModel: model.left - branch.right,
 			modelToThinking: thinking.left - model.right,
 		};
 	});
@@ -122,8 +128,26 @@ test("loads the shell and enforces the token", async () => {
 	expect(topbar.chevrons).toBe(2);
 	expect(topbar.chipStyle.background).toBe("rgba(0, 0, 0, 0)");
 	expect(topbar.groupStyle.background).not.toBe("rgba(0, 0, 0, 0)");
-	expect(topbar.projectToModel).toBeGreaterThan(0);
+	expect(topbar.projectToBranch).toBeGreaterThan(0);
+	expect(topbar.branchToModel).toBeGreaterThan(0);
 	expect(topbar.modelToThinking).toBeGreaterThan(0);
+});
+
+test("follows git branch changes without polling", async () => {
+	await expect(page.locator("#gitBranchLabel")).toHaveText("main");
+
+	await writeFile(
+		join(workspace.project, ".git", "HEAD"),
+		"ref: refs/heads/feature/live-branch\n",
+	);
+	await expect(page.locator("#gitBranchLabel")).toHaveText("feature/live-branch");
+
+	await writeFile(
+		join(workspace.project, ".git", "HEAD"),
+		"0123456789abcdef0123456789abcdef01234567\n",
+	);
+	await expect(page.locator("#gitBranchLabel")).toHaveText("0123456");
+	await expect(page.locator("#gitBranch")).toHaveAttribute("title", "Git branch: 0123456");
 });
 
 test("streams a reply with thinking, tools, markdown and copy", async () => {
