@@ -52,6 +52,9 @@ function openBrowser(url) {
 			detached: true,
 			windowsHide: true,
 		});
+		// A missing opener (WSL/containers without xdg-open) only shows up as an
+		// async error event; the URL is already printed, so keep the server alive.
+		child.on("error", () => {});
 		child.unref();
 	} catch {
 		/* the URL is printed anyway */
